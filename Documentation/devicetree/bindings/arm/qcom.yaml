@@ -1171,7 +1171,6 @@ properties:
 
       - items:
           - enum:
-              - acer,swift-sf14-11
               - asus,vivobook-s15
               - asus,zenbook-a14-ux3407ra
               - dell,inspiron-14-plus-7441
