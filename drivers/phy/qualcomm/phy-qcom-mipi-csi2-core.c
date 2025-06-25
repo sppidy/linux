@@ -2,7 +2,7 @@
 /*
  * Copyright (c) 2025, Linaro Ltd.
  */
-
+#include <dt-bindings/phy/phy.h>
 #include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/err.h>
@@ -10,9 +10,11 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/pm_opp.h>
 #include <linux/phy/phy.h>
 #include <linux/phy/phy-mipi-dphy.h>
 #include <linux/platform_device.h>
+#include <linux/pm_domain.h>
 #include <linux/pm_runtime.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
@@ -21,72 +23,51 @@
 
 #include "phy-qcom-mipi-csi2.h"
 
-#define CAMSS_CLOCK_MARGIN_NUMERATOR 105
-#define CAMSS_CLOCK_MARGIN_DENOMINATOR 100
-
-static inline void phy_qcom_mipi_csi2_add_clock_margin(u64 *rate)
-{
-	*rate *= CAMSS_CLOCK_MARGIN_NUMERATOR;
-	*rate = div_u64(*rate, CAMSS_CLOCK_MARGIN_DENOMINATOR);
-}
-
 static int
 phy_qcom_mipi_csi2_set_clock_rates(struct mipi_csi2phy_device *csi2phy,
 				   s64 link_freq)
 {
-	const struct mipi_csi2phy_soc_cfg *soc_cfg = csi2phy->soc_cfg;
 	struct device *dev = csi2phy->dev;
-	int i, j;
+	unsigned long opp_rate = link_freq / 4;
+	struct dev_pm_opp *opp;
+	long timer_rate;
 	int ret;
 
-	for (i = 0; i < soc_cfg->num_clk; i++) {
-		const struct mipi_csi2phy_clk_freq *clk_freq = &soc_cfg->clk_freq[i];
-		const char *clk_name = soc_cfg->clk_names[i];
-		struct clk *clk = csi2phy->clks[i].clk;
-		u64 min_rate = link_freq / 4;
-		long round_rate;
+	opp = dev_pm_opp_find_freq_ceil(dev, &opp_rate);
+	if (IS_ERR(opp)) {
+		dev_err(csi2phy->dev, "Couldn't find ceiling for %lld Hz\n",
+			link_freq);
+		return PTR_ERR(opp);
+	}
 
-		phy_qcom_mipi_csi2_add_clock_margin(&min_rate);
+	for (int i = 0; i < csi2phy->pd_list->num_pds; i++) {
+		unsigned int perf = dev_pm_opp_get_required_pstate(opp, i);
 
-		/* This clock should be enabled only not set */
-		if (!clk_freq->num_freq)
-			continue;
-
-		for (j = 0; j < clk_freq->num_freq; j++)
-			if (min_rate < clk_freq->freq[j])
-				break;
-
-		if (j == clk_freq->num_freq) {
-			dev_err(dev,
-				"Pixel clock %llu is too high for %s\n",
-				min_rate, clk_name);
-			return -EINVAL;
-		}
-
-		/* if sensor pixel clock is not available
-		 * set highest possible CSIPHY clock rate
-		 */
-		if (min_rate == 0)
-			j = clk_freq->num_freq - 1;
-
-		round_rate = clk_round_rate(clk, clk_freq->freq[j]);
-		if (round_rate < 0) {
-			dev_err(dev, "clk round rate failed: %ld\n",
-				round_rate);
-			return -EINVAL;
-		}
-
-		csi2phy->timer_clk_rate = round_rate;
-
-		dev_dbg(dev, "set clk %s %lu Hz\n",
-			clk_name, round_rate);
-
-		ret = clk_set_rate(clk, csi2phy->timer_clk_rate);
-		if (ret < 0) {
-			dev_err(dev, "clk set rate failed: %d\n", ret);
+		ret = dev_pm_genpd_set_performance_state(csi2phy->pd_list->pd_devs[i], perf);
+		if (ret) {
+			dev_err(csi2phy->dev, "Couldn't set perf state %u\n",
+				perf);
+			dev_pm_opp_put(opp);
 			return ret;
 		}
 	}
+	dev_pm_opp_put(opp);
+
+	ret = dev_pm_opp_set_rate(dev, opp_rate);
+	if (ret) {
+		dev_err(csi2phy->dev, "dev_pm_opp_set_rate() fail\n");
+		return ret;
+	}
+
+	timer_rate = clk_round_rate(csi2phy->timer_clk, link_freq / 4);
+	if (timer_rate < 0)
+		return timer_rate;
+
+	ret = clk_set_rate(csi2phy->timer_clk, timer_rate);
+	if (ret)
+		return ret;
+
+	csi2phy->timer_clk_rate = timer_rate;
 
 	return 0;
 }
@@ -95,38 +76,19 @@ static int phy_qcom_mipi_csi2_configure(struct phy *phy,
 					union phy_configure_opts *opts)
 {
 	struct mipi_csi2phy_device *csi2phy = phy_get_drvdata(phy);
-	struct phy_configure_opts_mipi_dphy *dphy_cfg_opts = &opts->mipi_dphy;
+	struct phy_configure_opts_mipi_dphy *dphy_cfg = &opts->mipi_dphy;
 	struct mipi_csi2phy_stream_cfg *stream_cfg = &csi2phy->stream_cfg;
 	int ret;
-	int i;
 
-	ret = phy_mipi_dphy_config_validate(dphy_cfg_opts);
+	ret = phy_mipi_dphy_config_validate(dphy_cfg);
 	if (ret)
 		return ret;
 
-	if (dphy_cfg_opts->lanes < 1 || dphy_cfg_opts->lanes > CSI2_MAX_DATA_LANES)
+	if (dphy_cfg->lanes < 1 || dphy_cfg->lanes > CSI2_MAX_DATA_LANES)
 		return -EINVAL;
 
-	stream_cfg->combo_mode = 0;
-	stream_cfg->link_freq = dphy_cfg_opts->hs_clk_rate;
-	stream_cfg->num_data_lanes = dphy_cfg_opts->lanes;
-
-	/*
-	 * phy_configure_opts_mipi_dphy.lanes starts from zero to
-	 * the maximum number of enabled lanes.
-	 *
-	 * TODO: add support for bitmask of enabled lanes and polarities
-	 * of those lanes to the phy_configure_opts_mipi_dphy struct.
-	 * For now take the polarities as zero and the position as fixed
-	 * this is fine as no current upstream implementation maps otherwise.
-	 */
-	for (i = 0; i < stream_cfg->num_data_lanes; i++) {
-		stream_cfg->lane_cfg.data[i].pol = 0;
-		stream_cfg->lane_cfg.data[i].pos = i;
-	}
-
-	stream_cfg->lane_cfg.clk.pol = 0;
-	stream_cfg->lane_cfg.clk.pos = 7;
+	stream_cfg->link_freq = dphy_cfg->hs_clk_rate;
+	stream_cfg->num_data_lanes = dphy_cfg->lanes;
 
 	return 0;
 }
@@ -154,6 +116,8 @@ static int phy_qcom_mipi_csi2_power_on(struct phy *phy)
 		goto poweroff_phy;
 	}
 
+	ops->reset(csi2phy);
+
 	ops->hw_version_read(csi2phy);
 
 	return ops->lanes_enable(csi2phy, &csi2phy->stream_cfg);
@@ -168,6 +132,10 @@ poweroff_phy:
 static int phy_qcom_mipi_csi2_power_off(struct phy *phy)
 {
 	struct mipi_csi2phy_device *csi2phy = phy_get_drvdata(phy);
+	int i;
+
+	for (i = 0; i < csi2phy->pd_list->num_pds; i++)
+		dev_pm_genpd_set_performance_state(csi2phy->pd_list->pd_devs[i], 0);
 
 	clk_bulk_disable_unprepare(csi2phy->soc_cfg->num_clk,
 				   csi2phy->clks);
@@ -184,6 +152,112 @@ static const struct phy_ops phy_qcom_mipi_csi2_ops = {
 	.owner		= THIS_MODULE,
 };
 
+static struct phy *qcom_csi2_phy_xlate(struct device *dev,
+				       const struct of_phandle_args *args)
+{
+	struct mipi_csi2phy_device *csi2phy = dev_get_drvdata(dev);
+
+	if (args->args[0] != PHY_TYPE_DPHY) {
+		dev_err(csi2phy->dev, "mode %d -EOPNOTSUPP\n", args->args[0]);
+		return ERR_PTR(-EOPNOTSUPP);
+	}
+
+	csi2phy->phy_mode = args->args[0];
+
+	return csi2phy->phy;
+}
+
+static int phy_qcom_mipi_csi2_attach_pm_domains(struct mipi_csi2phy_device *csi2phy)
+{
+	const struct dev_pm_domain_attach_data pd_data = {
+		.pd_names = csi2phy->soc_cfg->genpd_names,
+		.num_pd_names = csi2phy->soc_cfg->num_genpd_names,
+	};
+
+	return devm_pm_domain_attach_list(csi2phy->dev, &pd_data, &csi2phy->pd_list);
+}
+
+static int phy_qcom_mipi_csi2_parse_routing(struct mipi_csi2phy_device *csi2phy)
+{
+	struct mipi_csi2phy_stream_cfg *stream_cfg = &csi2phy->stream_cfg;
+	u32 lane_polarities[CSI2_MAX_DATA_LANES + 1];
+	u32 data_lanes[CSI2_MAX_DATA_LANES];
+	struct device *dev = csi2phy->dev;
+	struct fwnode_handle *ep;
+	int num_polarities;
+	int num_data_lanes;
+	u32 clock_lane;
+	int i, ret;
+
+	ep = fwnode_graph_get_endpoint_by_id(dev_fwnode(dev), 1, 0,
+					     FWNODE_GRAPH_ENDPOINT_NEXT);
+	if (ep) {
+		fwnode_handle_put(ep);
+		dev_err(dev, "DPHY split mode is not supported\n");
+		return -EOPNOTSUPP;
+	}
+
+	ep = fwnode_graph_get_endpoint_by_id(dev_fwnode(dev), 0, 0, 0);
+	if (!ep) {
+		dev_err(dev, "Missing port@0\n");
+		return -ENODEV;
+	}
+
+	num_data_lanes = fwnode_property_count_u32(ep, "data-lanes");
+	if (num_data_lanes < 1 || num_data_lanes > CSI2_MAX_DATA_LANES) {
+		ret = -EINVAL;
+		dev_err(dev, "Invalid data-lanes count: %d\n", num_data_lanes);
+		goto out_put;
+	}
+	stream_cfg->num_data_lanes = num_data_lanes;
+
+	ret = fwnode_property_read_u32_array(ep, "data-lanes", data_lanes,
+					     stream_cfg->num_data_lanes);
+	if (ret) {
+		dev_err(dev, "Failed to read data-lanes: %d\n", ret);
+		goto out_put;
+	}
+
+	ret = fwnode_property_read_u32(ep, "clock-lanes", &clock_lane);
+	if (ret) {
+		dev_err(dev, "Failed to read clock-lanes: %d\n", ret);
+		goto out_put;
+	}
+
+	/* lane-polarities: optional, up to num_data_lanes + 1 entries */
+	memset(lane_polarities, 0x00, sizeof(lane_polarities));
+	num_polarities = fwnode_property_count_u32(ep, "lane-polarities");
+	if (num_polarities > 0) {
+		if (num_polarities != stream_cfg->num_data_lanes + 1) {
+			ret = -EINVAL;
+			dev_err(dev, "clock+data-lane %d/polarities %d mismatch\n",
+				stream_cfg->num_data_lanes + 1, num_polarities);
+			goto out_put;
+		}
+
+		ret = fwnode_property_read_u32_array(ep, "lane-polarities", lane_polarities,
+						     num_polarities);
+		if (ret) {
+			dev_err(dev, "Failed to read lane-polarities: %d\n", ret);
+			goto out_put;
+		}
+	}
+
+	for (i = 0; i < csi2phy->stream_cfg.num_data_lanes; i++) {
+		csi2phy->stream_cfg.lane_cfg.data[i].pos = data_lanes[i];
+		csi2phy->stream_cfg.lane_cfg.data[i].pol = lane_polarities[i + 1];
+	}
+	csi2phy->stream_cfg.lane_cfg.clk.pos = clock_lane;
+	csi2phy->stream_cfg.lane_cfg.clk.pol = lane_polarities[0];
+
+	ret = 0;
+
+out_put:
+	fwnode_handle_put(ep);
+
+	return ret;
+}
+
 static int phy_qcom_mipi_csi2_probe(struct platform_device *pdev)
 {
 	unsigned int i, num_clk, num_supplies;
@@ -198,6 +272,8 @@ static int phy_qcom_mipi_csi2_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	csi2phy->dev = dev;
+	dev_set_drvdata(dev, csi2phy);
+
 	csi2phy->soc_cfg = device_get_match_data(&pdev->dev);
 
 	if (!csi2phy->soc_cfg)
@@ -208,20 +284,34 @@ static int phy_qcom_mipi_csi2_probe(struct platform_device *pdev)
 	if (!csi2phy->clks)
 		return -ENOMEM;
 
+	ret = phy_qcom_mipi_csi2_parse_routing(csi2phy);
+	if (ret)
+		return ret;
+
+	ret = phy_qcom_mipi_csi2_attach_pm_domains(csi2phy);
+	if (ret < 0)
+		return dev_err_probe(dev, ret, "Failed to attach power-domain list\n");
+
 	for (i = 0; i < num_clk; i++)
 		csi2phy->clks[i].id = csi2phy->soc_cfg->clk_names[i];
 
 	ret = devm_clk_bulk_get(dev, num_clk, csi2phy->clks);
-	if (ret) {
-		dev_err(dev, "Failed to get clocks %d\n", ret);
-		return ret;
+	if (ret)
+		return dev_err_probe(dev, ret, "Failed to get clocks\n");
+
+	csi2phy->timer_clk = devm_clk_get(dev, csi2phy->soc_cfg->timer_clk);
+	if (IS_ERR(csi2phy->timer_clk)) {
+		return dev_err_probe(dev, PTR_ERR(csi2phy->timer_clk),
+				     "Failed to get timer clock\n");
 	}
 
-	ret = clk_bulk_prepare_enable(num_clk, csi2phy->clks);
-	if (ret) {
-		dev_err(dev, "apq8016 clk_enable failed\n");
-		return ret;
-	}
+	ret = devm_pm_opp_set_clkname(dev, csi2phy->soc_cfg->opp_clk);
+	if (ret)
+		return dev_err_probe(dev, ret, "Failed to set opp clkname\n");
+
+	ret = devm_pm_opp_of_add_table(dev);
+	if (ret && ret != -ENODEV)
+		return dev_err_probe(dev, ret, "invalid OPP table in device tree\n");
 
 	num_supplies = csi2phy->soc_cfg->num_supplies;
 	csi2phy->supplies = devm_kzalloc(dev, sizeof(*csi2phy->supplies) * num_supplies,
@@ -244,24 +334,21 @@ static int phy_qcom_mipi_csi2_probe(struct platform_device *pdev)
 	generic_phy = devm_phy_create(dev, NULL, &phy_qcom_mipi_csi2_ops);
 	if (IS_ERR(generic_phy)) {
 		ret = PTR_ERR(generic_phy);
-		dev_err(dev, "failed to create phy, %d\n", ret);
-		return ret;
+		return dev_err_probe(dev, ret, "failed to create phy\n");
 	}
 	csi2phy->phy = generic_phy;
 
 	phy_set_drvdata(generic_phy, csi2phy);
 
-	phy_provider = devm_of_phy_provider_register(dev, of_phy_simple_xlate);
+	phy_provider = devm_of_phy_provider_register(dev, qcom_csi2_phy_xlate);
 	if (!IS_ERR(phy_provider))
 		dev_dbg(dev, "Registered MIPI CSI2 PHY device\n");
-	else
-		pm_runtime_disable(dev);
 
 	return PTR_ERR_OR_ZERO(phy_provider);
 }
 
 static const struct of_device_id phy_qcom_mipi_csi2_of_match_table[] = {
-	{ .compatible	= "qcom,x1e80100-mipi-csi2-combo-phy", .data = &mipi_csi2_dphy_4nm_x1e },
+	{ .compatible	= "qcom,x1e80100-csi2-phy", .data = &mipi_csi2_dphy_4nm_x1e },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, phy_qcom_mipi_csi2_of_match_table);
@@ -277,5 +364,5 @@ static struct platform_driver phy_qcom_mipi_csi2_driver = {
 module_platform_driver(phy_qcom_mipi_csi2_driver);
 
 MODULE_DESCRIPTION("Qualcomm MIPI CSI2 PHY driver");
-MODULE_DESCRIPTION("Bryan O'Donoghue <bryan.odonoghue@linaro.org>");
+MODULE_AUTHOR("Bryan O'Donoghue <bryan.odonoghue@linaro.org>");
 MODULE_LICENSE("GPL");
