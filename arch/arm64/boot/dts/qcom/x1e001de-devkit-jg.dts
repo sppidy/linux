@@ -1238,6 +1238,8 @@
 &pcie4 {
 	vddpe-3v3-supply = <&vreg_wcn_3p3>;
 
+	vddpe-3v3-supply = <&vreg_wcn_3p3>;
+
 	pinctrl-0 = <&pcie4_default>;
 	pinctrl-names = "default";
 
