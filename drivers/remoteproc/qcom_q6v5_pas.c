@@ -820,14 +820,10 @@ static int qcom_pas_probe(struct platform_device *pdev)
 	}
 
 	rproc->has_iommu = of_property_present(pdev->dev.of_node, "iommus");
-	if (desc->auto_boot) {
-		if (ops->start)
-			rproc->auto_boot = RPROC_AUTO_BOOT_RESTART_IF_FW_AVAILABLE;
-		else
-			rproc->auto_boot = RPROC_AUTO_BOOT_ATTACH_OR_START;
-	} else {
+	if (desc->auto_boot)
+		rproc->auto_boot = RPROC_AUTO_BOOT_ATTACH_OR_START;
+	else
 		rproc->auto_boot = RPROC_AUTO_BOOT_DISABLED;
-	}
 	rproc_coredump_set_elf_info(rproc, ELFCLASS32, EM_NONE);
 
 	pas = rproc->priv;
