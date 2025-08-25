@@ -1402,6 +1402,8 @@ void msm_dp_bridge_atomic_enable(struct drm_bridge *drm_bridge,
 	if (!dp->power_on) {
 		msm_dp_display_host_phy_init(msm_dp_display);
 		force_link_train = true;
+	} else if (dp->is_edp) {  /* Force retrain for eDP on resume */
+		force_link_train = true;
 	}
 
 	rc = msm_dp_ctrl_on_link(msm_dp_display->ctrl);
@@ -1410,7 +1412,6 @@ void msm_dp_bridge_atomic_enable(struct drm_bridge *drm_bridge,
 		// TODO: schedule drm_connector_set_link_status_property()
 		return;
 	}
-
 	msm_dp_display_enable(msm_dp_display, force_link_train);
 
 	rc = msm_dp_display_post_enable(dp);
