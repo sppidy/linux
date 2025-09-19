@@ -1104,6 +1104,7 @@
 
 	aux-bus {
 		panel {
+//			compatible = "samsung,atna40ct01";
 			compatible = "edp-panel";
 
 			power-supply = <&vreg_edp_3p3>;
