@@ -40,4 +40,7 @@
 /* Special value intended for qcom,shm-bridge-vmid */
 #define QCOM_SCM_VMID_SELF_OWNER	0xffffffff
 
+/* Special value intended for qcom,shm-bridge-vmid */
+#define QCOM_SCM_VMID_SELF_OWNER	0xffffffff
+
 #endif
