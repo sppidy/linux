@@ -205,43 +205,6 @@ properties:
             required:
               - data-lanes
 
-        allOf:
-          # Case 1: Combo Mode (endpoint@1 is present)
-          # If endpoint@1 exists, we restrict endpoint@0 to 2 lanes (D-PHY split)
-          - if:
-              required:
-                - endpoint@1
-            then:
-              properties:
-                endpoint@0:
-                  properties:
-                    data-lanes:
-                      minItems: 2
-                      maxItems: 2
-                    bus-type:
-                      const: 4
-                endpoint@1:
-                  properties:
-                    data-lanes:
-                      minItems: 1
-                      maxItems: 1
-                    bus-type:
-                      const: 4
-
-          # Case 2: Single Mode (endpoint@1 is missing)
-          # We explicitly allow up to 4 lanes here to cover the D-PHY use case.
-          - if:
-              not:
-                required:
-                  - endpoint@1
-            then:
-              properties:
-                endpoint@0:
-                  properties:
-                    data-lanes:
-                      minItems: 1
-                      maxItems: 4
-
 patternProperties:
   "^phy@[0-9a-f]+$":
     $ref: /schemas/phy/qcom,x1e80100-csi2-phy.yaml
