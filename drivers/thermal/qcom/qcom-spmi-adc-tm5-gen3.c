@@ -17,10 +17,11 @@
 #include <linux/module.h>
 #include <linux/thermal.h>
 #include <linux/types.h>
-#include <linux/workqueue.h>
 #include <linux/unaligned.h>
 
 #include "../thermal_hwmon.h"
+
+#define ADC_TM5_GEN3_CONFIG_REGS 12
 
 struct device;
 struct adc_tm5_gen3_chip;
@@ -35,9 +36,6 @@ struct adc_tm5_gen3_chip;
  * @low_thr_en: TM low threshold crossing detection enabled.
  * @chip: ADC TM device.
  * @tzd: pointer to thermal device corresponding to TM channel.
- * @last_temp: last temperature that caused threshold violation,
- *	or a thermal TM channel.
- * @last_temp_set: indicates if last_temp is stored.
  */
 struct adc_tm5_gen3_channel_props {
 	unsigned int timer;
@@ -48,8 +46,6 @@ struct adc_tm5_gen3_channel_props {
 	bool low_thr_en;
 	struct adc_tm5_gen3_chip *chip;
 	struct thermal_zone_device *tzd;
-	int last_temp;
-	bool last_temp_set;
 };
 
 /**
@@ -58,14 +54,12 @@ struct adc_tm5_gen3_channel_props {
  * @chan_props: Array of ADC_TM channel structures.
  * @nchannels: number of TM channels allocated
  * @dev: SPMI ADC5 Gen3 device.
- * @tm_handler_work: handler for TM interrupt for threshold violation.
  */
 struct adc_tm5_gen3_chip {
 	struct adc5_device_data *dev_data;
 	struct adc_tm5_gen3_channel_props *chan_props;
 	unsigned int nchannels;
 	struct device *dev;
-	struct work_struct tm_handler_work;
 };
 
 DEFINE_GUARD(adc5_gen3, struct adc_tm5_gen3_chip *, adc5_gen3_mutex_lock(_T->dev),
@@ -88,23 +82,15 @@ static irqreturn_t adctm5_gen3_isr(int irq, void *dev_id)
 	u8 status, val;
 
 	sdam_num = get_sdam_from_irq(adc_tm5, irq);
-	if (sdam_num < 0) {
-		dev_err(adc_tm5->dev, "adc irq %d not associated with an sdam\n",
-			irq);
-		return IRQ_HANDLED;
-	}
+	if (sdam_num < 0)
+		return IRQ_NONE;
 
 	ret = adc5_gen3_read(adc_tm5->dev_data, sdam_num, ADC5_GEN3_STATUS1,
 			     &status, sizeof(status));
-	if (ret) {
-		dev_err(adc_tm5->dev, "adc read status1 failed with %d\n", ret);
-		return IRQ_HANDLED;
-	}
+	if (ret)
+		return IRQ_NONE;
 
 	if (status & ADC5_GEN3_STATUS1_CONV_FAULT) {
-		dev_err_ratelimited(adc_tm5->dev,
-				    "Unexpected conversion fault, status:%#x\n",
-				    status);
 		val = ADC5_GEN3_CONV_ERR_CLR_REQ;
 		adc5_gen3_status_clear(adc_tm5->dev_data, sdam_num,
 				       ADC5_GEN3_CONV_ERR_CLR, &val, 1);
@@ -113,18 +99,13 @@ static irqreturn_t adctm5_gen3_isr(int irq, void *dev_id)
 
 	ret = adc5_gen3_read(adc_tm5->dev_data, sdam_num, ADC5_GEN3_TM_HIGH_STS,
 			     tm_status, sizeof(tm_status));
-	if (ret) {
-		dev_err(adc_tm5->dev, "adc read TM status failed with %d\n", ret);
-		return IRQ_HANDLED;
-	}
+	if (ret)
+		return IRQ_NONE;
 
 	if (tm_status[0] || tm_status[1])
-		schedule_work(&adc_tm5->tm_handler_work);
+		return IRQ_WAKE_THREAD;
 
-	dev_dbg(adc_tm5->dev, "Interrupt status:%#x, high:%#x, low:%#x\n",
-		status, tm_status[0], tm_status[1]);
-
-	return IRQ_HANDLED;
+	return IRQ_NONE;
 }
 
 static int adc5_gen3_tm_status_check(struct adc_tm5_gen3_chip *adc_tm5,
@@ -134,31 +115,22 @@ static int adc5_gen3_tm_status_check(struct adc_tm5_gen3_chip *adc_tm5,
 
 	ret = adc5_gen3_read(adc_tm5->dev_data, sdam_index, ADC5_GEN3_TM_HIGH_STS,
 			     tm_status, 2);
-	if (ret) {
-		dev_err(adc_tm5->dev, "adc read TM status failed with %d\n", ret);
+	if (ret)
 		return ret;
-	}
 
 	ret = adc5_gen3_status_clear(adc_tm5->dev_data, sdam_index, ADC5_GEN3_TM_HIGH_STS_CLR,
 				     tm_status, 2);
-	if (ret) {
-		dev_err(adc_tm5->dev, "adc status clear conv_req failed with %d\n",
-			ret);
+	if (ret)
 		return ret;
-	}
 
 	ret = adc5_gen3_read(adc_tm5->dev_data, sdam_index, ADC5_GEN3_CH_DATA0(0),
 			     buf, 16);
-	if (ret)
-		dev_err(adc_tm5->dev, "adc read data failed with %d\n", ret);
-
 	return ret;
 }
 
-static void tm_handler_work(struct work_struct *work)
+static irqreturn_t adctm5_gen3_isr_thread(int irq, void *dev_id)
 {
-	struct adc_tm5_gen3_chip *adc_tm5 = container_of(work, struct adc_tm5_gen3_chip,
-							 tm_handler_work);
+	struct adc_tm5_gen3_chip *adc_tm5 = dev_id;
 	int sdam_index = -1;
 	u8 tm_status[2] = { };
 	u8 buf[16] = { };
@@ -167,8 +139,7 @@ static void tm_handler_work(struct work_struct *work)
 		struct adc_tm5_gen3_channel_props *chan_prop = &adc_tm5->chan_props[i];
 		int offset = chan_prop->tm_chan_index;
 		bool upper_set, lower_set;
-		int ret, temp;
-		u16 code;
+		int ret;
 
 		scoped_guard(adc5_gen3, adc_tm5) {
 			if (chan_prop->sdam_index != sdam_index) {
@@ -176,7 +147,7 @@ static void tm_handler_work(struct work_struct *work)
 				ret = adc5_gen3_tm_status_check(adc_tm5, sdam_index,
 								tm_status, buf);
 				if (ret)
-					return;
+					return IRQ_NONE;
 			}
 
 			upper_set = ((tm_status[0] & BIT(offset)) && chan_prop->high_thr_en);
@@ -186,23 +157,10 @@ static void tm_handler_work(struct work_struct *work)
 		if (!(upper_set || lower_set))
 			continue;
 
-		code = get_unaligned_le16(&buf[2 * offset]);
-		dev_dbg(adc_tm5->dev, "ADC_TM threshold code:%#x\n", code);
-
-		ret = adc5_gen3_therm_code_to_temp(adc_tm5->dev,
-						   &chan_prop->common_props,
-						   code, &temp);
-		if (ret) {
-			dev_err(adc_tm5->dev,
-				"Invalid temperature reading, ret = %d, code=%#x\n",
-				ret, code);
-			continue;
-		}
-
-		chan_prop->last_temp = temp;
-		chan_prop->last_temp_set = true;
 		thermal_zone_device_update(chan_prop->tzd, THERMAL_TRIP_VIOLATED);
 	}
+
+	return IRQ_HANDLED;
 }
 
 static int adc_tm5_gen3_get_temp(struct thermal_zone_device *tz, int *temp)
@@ -214,13 +172,6 @@ static int adc_tm5_gen3_get_temp(struct thermal_zone_device *tz, int *temp)
 		return -EINVAL;
 
 	adc_tm5 = prop->chip;
-
-	if (prop->last_temp_set) {
-		pr_debug("last_temp: %d\n", prop->last_temp);
-		prop->last_temp_set = false;
-		*temp = prop->last_temp;
-		return 0;
-	}
 
 	return adc5_gen3_get_scaled_reading(adc_tm5->dev, &prop->common_props,
 					    temp);
@@ -245,6 +196,11 @@ static int adc_tm5_gen3_disable_channel(struct adc_tm5_gen3_channel_props *prop)
 	if (ret)
 		return ret;
 
+	ret = adc5_gen3_write(adc_tm5->dev_data, prop->sdam_index,
+			      ADC5_GEN3_TM_LOW_STS_CLR, &val, sizeof(val));
+	if (ret)
+		return ret;
+
 	val = MEAS_INT_DISABLE;
 	ret = adc5_gen3_write(adc_tm5->dev_data, prop->sdam_index,
 			      ADC5_GEN3_TIMER_SEL, &val, sizeof(val));
@@ -262,8 +218,6 @@ static int adc_tm5_gen3_disable_channel(struct adc_tm5_gen3_channel_props *prop)
 	return adc5_gen3_write(adc_tm5->dev_data, prop->sdam_index,
 			       ADC5_GEN3_CONV_REQ, &val, sizeof(val));
 }
-
-#define ADC_TM5_GEN3_CONFIG_REGS 12
 
 static int adc_tm5_gen3_configure(struct adc_tm5_gen3_channel_props *prop,
 				  int low_temp, int high_temp)
@@ -350,8 +304,6 @@ static int adc_tm5_gen3_set_trip_temp(struct thermal_zone_device *tz,
 		prop->common_props.label, low_temp, high_temp);
 
 	guard(adc5_gen3)(adc_tm5);
-	if (high_temp == INT_MAX && low_temp == -INT_MAX)
-		return adc_tm5_gen3_disable_channel(prop);
 
 	return adc_tm5_gen3_configure(prop, low_temp, high_temp);
 }
@@ -391,13 +343,6 @@ static int adc_tm5_register_tzd(struct adc_tm5_gen3_chip *adc_tm5)
 	return 0;
 }
 
-static void adc5_gen3_clear_work(void *data)
-{
-	struct adc_tm5_gen3_chip *adc_tm5 = data;
-
-	cancel_work_sync(&adc_tm5->tm_handler_work);
-}
-
 static void adc5_gen3_disable(void *data)
 {
 	struct adc_tm5_gen3_chip *adc_tm5 = data;
@@ -406,13 +351,6 @@ static void adc5_gen3_disable(void *data)
 	/* Disable all available TM channels */
 	for (int i = 0; i < adc_tm5->nchannels; i++)
 		adc_tm5_gen3_disable_channel(&adc_tm5->chan_props[i]);
-}
-
-static void adctm_event_handler(struct auxiliary_device *adev)
-{
-	struct adc_tm5_gen3_chip *adc_tm5 = auxiliary_get_drvdata(adev);
-
-	schedule_work(&adc_tm5->tm_handler_work);
 }
 
 static int adc_tm5_probe(struct auxiliary_device *aux_dev,
@@ -446,46 +384,38 @@ static int adc_tm5_probe(struct auxiliary_device *aux_dev,
 		adc_tm5->chan_props[i].chip = adc_tm5;
 	}
 
-	INIT_WORK(&adc_tm5->tm_handler_work, tm_handler_work);
+	/* This is to disable all ADC_TM channels in case of probe failure. */
+	ret = devm_add_action(dev, adc5_gen3_disable, adc_tm5);
+	if (ret)
+		return ret;
 
 	/*
-	 * Skipping first SDAM IRQ as it is requested in parent driver.
-	 * If there is a TM violation on that IRQ, the parent driver calls
-	 * the notifier (adctm_event_handler) exposed from this driver to handle it.
+	 * First SDAM's interrupt is shared between main ADC driver
+	 * and auxiliary TM driver, so its flags must include
+	 * IRQF_SHARED. This is not needed for other SDAMs as they
+	 * will be used only for TM functionality.
 	 */
+
+	ret = devm_request_threaded_irq(dev,
+					adc_tm5->dev_data->base[0].irq,
+					adctm5_gen3_isr, adctm5_gen3_isr_thread,
+					IRQF_ONESHOT | IRQF_SHARED,
+					adc_tm5->dev_data->base[0].irq_name,
+					adc_tm5);
+	if (ret < 0)
+		return ret;
+
 	for (int i = 1; i < adc_tm5->dev_data->num_sdams; i++) {
 		ret = devm_request_threaded_irq(dev,
 						adc_tm5->dev_data->base[i].irq,
-						NULL, adctm5_gen3_isr, IRQF_ONESHOT,
-						adc_tm5->dev_data->base[i].irq_name,
+						adctm5_gen3_isr, adctm5_gen3_isr_thread,
+						IRQF_ONESHOT, adc_tm5->dev_data->base[i].irq_name,
 						adc_tm5);
 		if (ret < 0)
 			return ret;
 	}
 
-	/*
-	 * This drvdata is only used in the function (adctm_event_handler)
-	 * called by parent ADC driver in case of TM violation on the first SDAM.
-	 */
-	auxiliary_set_drvdata(aux_dev, adc_tm5);
-
-	adc5_gen3_register_tm_event_notifier(dev, adctm_event_handler);
-
-	/*
-	 * This is to cancel any instances of tm_handler_work scheduled by
-	 * TM interrupt, at the time of module removal.
-	 */
-	ret = devm_add_action(dev, adc5_gen3_clear_work, adc_tm5);
-	if (ret)
-		return ret;
-
-	ret = adc_tm5_register_tzd(adc_tm5);
-	if (ret)
-		return ret;
-
-	/* This is to disable all ADC_TM channels in case of probe failure. */
-
-	return devm_add_action(dev, adc5_gen3_disable, adc_tm5);
+	return adc_tm5_register_tzd(adc_tm5);
 }
 
 static const struct auxiliary_device_id adctm5_auxiliary_id_table[] = {
