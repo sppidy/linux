@@ -105,6 +105,12 @@ struct iris_core {
 	struct iris_iface_q_info		debug_queue;
 	struct mutex				lock; /* lock for core related operations */
 	u8					*response_packet;
+	bool					use_tz;
+	struct video_firmware {
+		struct platform_device		*pdev;
+		struct iommu_domain		*iommu_domain;
+		size_t				mapped_mem_size;
+	} fw;
 	u32					header_id;
 	u32					packet_id;
 	struct iris_core_power			power;
