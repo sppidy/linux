@@ -200,6 +200,15 @@ config HID_ASUS
 	- GL553V series
 	- GL753V series
 
+config HID_ASUS_EC
+	tristate "Asus EC (Embedded Controller) for Zenbook A14"
+	depends on I2C_HID
+	depends on LEDS_CLASS
+	help
+	Support for the ASUS Embedded Controller HID interface on the
+	Zenbook A14 (UX3407QA) for keyboard backlight control and
+	fn-key hotkey events.
+
 config HID_AUREAL
 	tristate "Aureal"
 	help
