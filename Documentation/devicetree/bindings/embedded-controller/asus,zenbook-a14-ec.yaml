@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/embedded-controller/asus,zenbook-a14-ec.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: ASUS Zenbook A14 Embedded Controller
+
+maintainers:
+  - Sombre-Osmoze <sombre@osmoze.xyz>
+
+description:
+  The ASUS Zenbook A14 (UX3407QA / X1P, UX3407RA / X1E) carries an EC at
+  I2C address 0x5b on the same bus as a companion fan controller at I2C
+  address 0x76. The driver claims 0x76 internally via a dummy i2c client;
+  user-mode access to either address while the driver is bound is
+  unsupported.
+
+  Only the EC at 0x5b appears in DT. The driver provides hwmon (fan
+  tachometer, PWM, EC thermistor) and platform_profile (quiet, balanced,
+  performance).
+
+properties:
+  compatible:
+    const: asus,zenbook-a14-ec
+
+  reg:
+    const: 0x5b
+
+required:
+  - compatible
+  - reg
+
+additionalProperties: false
+
+examples:
+  - |+
+    i2c {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        embedded-controller@5b {
+            compatible = "asus,zenbook-a14-ec";
+            reg = <0x5b>;
+        };
+    };
+...
