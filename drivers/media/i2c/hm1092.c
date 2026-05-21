@@ -132,6 +132,13 @@ static int hm1092_set_ctrl(struct v4l2_ctrl *ctrl)
 	case V4L2_CID_TEST_PATTERN:
 		ret = hm1092_set_test_pattern(hm1092, ctrl->val);
 		break;
+	case V4L2_CID_ANALOGUE_GAIN:
+	case V4L2_CID_EXPOSURE:
+		/* TODO: write to the sensor's exposure/gain registers once
+		 * we know which Chromatix middle*Addr fields point at them.
+		 */
+		ret = 0;
+		break;
 	default:
 		ret = -EINVAL;
 		break;
@@ -184,6 +191,15 @@ static int hm1092_init_controls(struct hm1092 *hm1092)
 					   mode->vts - mode->height);
 	if (hm1092->vblank)
 		hm1092->vblank->flags |= V4L2_CTRL_FLAG_READ_ONLY;
+
+	/* Mandatory controls for libcamera. Conservative defaults until we
+	 * RE the exposure/gain register address layout from the Chromatix
+	 * sensormodule (middleCoarseIntgTimeAddr / shortGlobalGainAddr).
+	 */
+	v4l2_ctrl_new_std(ctrl_hdlr, &hm1092_ctrl_ops, V4L2_CID_ANALOGUE_GAIN,
+			  0x10, 0xff, 1, 0x10);
+	v4l2_ctrl_new_std(ctrl_hdlr, &hm1092_ctrl_ops, V4L2_CID_EXPOSURE,
+			  1, mode->vts - 4, 1, mode->vts - 4);
 
 	v4l2_ctrl_new_std_menu_items(ctrl_hdlr, &hm1092_ctrl_ops,
 				     V4L2_CID_TEST_PATTERN,
