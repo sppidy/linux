@@ -1784,3 +1784,16 @@
 
 	status = "okay";
 };
+
+/*
+ * PM8550 flash LED controller — left disabled.
+ * Tested all four channels individually (led-sources = <1>, <2>, <3>,
+ * <4>) at up to 50 mA torch: no IR glow visible via phone camera, and
+ * flash_fault was empty in every case. PMIC firmware appears to own
+ * the flash block on this platform — the Windows camera flash driver
+ * configures IR LED current through the pmic-glink "WhiteLED PMIC"
+ * path and triggers it via IOCTL_KMD_CAMERA_PLATFORM_GPIO_SYNC_WRITE_WAIT
+ * (CCI_GPIOSyncWrite ncid=1 pinId=6), not by writing PM8550 registers
+ * directly. Re-enabling leds-qcom-flash on this node also regressed
+ * qcom-battmgr on at least one boot.
+ */
