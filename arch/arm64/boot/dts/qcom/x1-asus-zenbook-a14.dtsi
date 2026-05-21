@@ -822,12 +822,12 @@
 
 	ports {
 		/*
-		 * port0 => csiphy0
-		 * port1 => csiphy1
-		 * port2 => csiphy2
-		 * port3 => csiphy4
+		 * On Purwa (x1p42100) the camss only has 2 csiphys (0 and 4),
+		 * so the driver's port mapping is:
+		 *   port@0 => csiphy0
+		 *   port@1 => csiphy4
 		 */
-		port@3 {
+		port@1 {
 			camss_csiphy4_inep: endpoint@0 {
 				reg = <0>;
 				data-lanes = <0 1>;
