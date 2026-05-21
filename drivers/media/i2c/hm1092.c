@@ -34,9 +34,9 @@ struct hm1092_mode {
 	u32 vts;
 };
 
-static const struct hm1092_mode hm1092_mode_560x360 = {
-	.width = 560,
-	.height = 360,
+static const struct hm1092_mode hm1092_mode_1280x720 = {
+	.width = 1280,
+	.height = 720,
 	.hts = 0x0650,
 	.vts = 0x02ee,
 };
@@ -156,7 +156,7 @@ static const struct v4l2_ctrl_ops hm1092_ctrl_ops = {
 static int hm1092_init_controls(struct hm1092 *hm1092)
 {
 	struct v4l2_ctrl_handler *ctrl_hdlr = &hm1092->ctrl_handler;
-	const struct hm1092_mode *mode = &hm1092_mode_560x360;
+	const struct hm1092_mode *mode = &hm1092_mode_1280x720;
 	struct v4l2_fwnode_device_properties props;
 	s64 hblank, pixel_rate;
 	int ret;
@@ -222,8 +222,8 @@ static int hm1092_init_controls(struct hm1092 *hm1092)
 
 static void hm1092_update_pad_format(struct v4l2_mbus_framefmt *fmt)
 {
-	fmt->width = hm1092_mode_560x360.width;
-	fmt->height = hm1092_mode_560x360.height;
+	fmt->width = hm1092_mode_1280x720.width;
+	fmt->height = hm1092_mode_1280x720.height;
 	fmt->code = MEDIA_BUS_FMT_Y10_1X10;
 	fmt->field = V4L2_FIELD_NONE;
 }
@@ -307,10 +307,10 @@ static int hm1092_enum_frame_size(struct v4l2_subdev *sd,
 	if (fse->code != MEDIA_BUS_FMT_Y10_1X10)
 		return -EINVAL;
 
-	fse->min_width = hm1092_mode_560x360.width;
-	fse->max_width = hm1092_mode_560x360.width;
-	fse->min_height = hm1092_mode_560x360.height;
-	fse->max_height = hm1092_mode_560x360.height;
+	fse->min_width = hm1092_mode_1280x720.width;
+	fse->max_width = hm1092_mode_1280x720.width;
+	fse->min_height = hm1092_mode_1280x720.height;
+	fse->max_height = hm1092_mode_1280x720.height;
 
 	return 0;
 }

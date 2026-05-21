@@ -844,7 +844,7 @@
 		port@0 {
 			camss_csiphy0_inep: endpoint@0 {
 				reg = <0>;
-				data-lanes = <0 1>;
+				data-lanes = <0>;
 				remote-endpoint = <&csiphy0_out_ep>;
 			};
 		};
@@ -884,7 +884,7 @@
 
 		port {
 			hm1092_ep: endpoint {
-				data-lanes = <1 2>;
+				data-lanes = <1>;
 				link-frequencies = /bits/ 64 <400000000>;
 				remote-endpoint = <&csiphy0_in_ep>;
 			};
@@ -941,7 +941,7 @@
 		port@0 {
 			reg = <0>;
 			csiphy0_in_ep: endpoint {
-				data-lanes = <0 1>;
+				data-lanes = <0>;
 				clock-lanes = <7>;
 				remote-endpoint = <&hm1092_ep>;
 			};
