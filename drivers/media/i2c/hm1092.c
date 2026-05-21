@@ -429,22 +429,33 @@ static int hm1092_power_on(struct device *dev)
 	struct hm1092 *hm1092 = to_hm1092(sd);
 	int ret;
 
-	ret = clk_prepare_enable(hm1092->img_clk);
-	if (ret)
-		return ret;
-
+	/*
+	 * Sequence reverse-engineered from the Chromatix AeoB powerSetting:
+	 *   1. enable all rails (~1 ms ramp per supply)
+	 *   2. hold reset asserted
+	 *   3. start MCLK and let the sensor clock for ~1 ms
+	 *   4. release reset and wait 18 ms for the sensor to come up
+	 */
 	ret = regulator_bulk_enable(ARRAY_SIZE(hm1092_supply_names),
 				    hm1092->supplies);
+	if (ret)
+		return ret;
+	usleep_range(3000, 3500);
+
+	if (hm1092->reset)
+		gpiod_set_value_cansleep(hm1092->reset, 1);
+
+	ret = clk_prepare_enable(hm1092->img_clk);
 	if (ret) {
-		clk_disable_unprepare(hm1092->img_clk);
+		regulator_bulk_disable(ARRAY_SIZE(hm1092_supply_names),
+				       hm1092->supplies);
 		return ret;
 	}
+	usleep_range(1000, 1200);
 
-	if (hm1092->reset) {
-		usleep_range(2000, 2200);
+	if (hm1092->reset)
 		gpiod_set_value_cansleep(hm1092->reset, 0);
-		usleep_range(5000, 5100);
-	}
+	msleep(18);
 
 	return 0;
 }

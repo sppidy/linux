@@ -863,7 +863,7 @@
 	status = "okay";
 };
 
-&cci0_i2c1 {
+&cci1_i2c0 {
 	camera@24 {
 		compatible = "himax,hm1092";
 		reg = <0x24>;
