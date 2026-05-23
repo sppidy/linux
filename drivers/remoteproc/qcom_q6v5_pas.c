@@ -463,8 +463,36 @@ static int qcom_pas_stop(struct rproc *rproc)
 static int qcom_pas_attach(struct rproc *rproc)
 {
 	struct qcom_pas *pas = rproc->priv;
+	int ret;
 
-	return qcom_q6v5_attach(&pas->q6v5);
+	/*
+	 * The remoteproc was already started by the boot firmware (e.g. qebspil)
+	 * and keeps DMAing to its carveout memory. When Linux owns the SMMU (EL2)
+	 * that memory is not mapped, so identity-map the carveout(s) here just
+	 * like qcom_pas_start() does, otherwise the running firmware faults.
+	 */
+	if (pas->dtb_pas_id) {
+		ret = qcom_pas_map_carveout(rproc, pas->dtb_mem_phys, pas->dtb_mem_size);
+		if (ret)
+			return ret;
+	}
+
+	ret = qcom_pas_map_carveout(rproc, pas->mem_phys, pas->mem_size);
+	if (ret)
+		goto unmap_dtb_carveout;
+
+	ret = qcom_q6v5_attach(&pas->q6v5);
+	if (ret)
+		goto unmap_carveout;
+
+	return 0;
+
+unmap_carveout:
+	qcom_pas_unmap_carveout(rproc, pas->mem_phys, pas->mem_size);
+unmap_dtb_carveout:
+	if (pas->dtb_pas_id)
+		qcom_pas_unmap_carveout(rproc, pas->dtb_mem_phys, pas->dtb_mem_size);
+	return ret;
 }
 
 static void *qcom_pas_da_to_va(struct rproc *rproc, u64 da, size_t len, bool *is_iomem)
