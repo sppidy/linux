@@ -208,6 +208,16 @@
 			reusable;
 			linux,cma-default;
 		};
+
+		/* EL2 suspend/resume debug: capture console across the crash-reboot */
+		ramoops@a0000000 {
+			compatible = "ramoops";
+			reg = <0x0 0xa0000000 0x0 0x200000>;
+			console-size = <0x100000>;
+			pmsg-size = <0x40000>;
+			record-size = <0x40000>;
+			ecc-size = <16>;
+		};
 	};
 
 	sound {

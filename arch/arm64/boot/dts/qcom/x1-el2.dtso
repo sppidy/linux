@@ -67,14 +67,23 @@
 	status = "okay";
 };
 
-&remoteproc_adsp {
-	qcom,broken-reset;
-};
-
-&remoteproc_cdsp {
-	qcom,broken-reset;
-};
-
+/*
+ * EL2 (x1p42100), DT boot: do NOT describe the DSP firmware streams with
+ * iommus, and do NOT let qebspil pre-start the full ADSP.
+ *
+ * Why (proven 2026-05-24): arm-smmu's boot-mapping preservation is ACPI/IORT
+ * only (arm_smmu_rmr_install_bypass_smr -> iort_get_rmr_sids); on DT boot it is
+ * a no-op ("preserved 0"). So a described (translating) DSP stream has no
+ * mappings, and the qebspil-started firmware DMAs into it -> continuous SMMU
+ * context faults -> irq/NN-arm-smmu soft-lockup (CPU stuck) -> "failed to
+ * enumerate adsp-pas". Tested: full-ADSP+iommus soft-locks; full-ADSP+bypass
+ * fails attach ("needs real iommu, not bypass"); only XBL-lite ADSP + bypass
+ * works.
+ *
+ * Working config: streams unmatched -> bypass (arm-smmu.disable_bypass=0).
+ * CDSP attaches & works; ADSP runs as the XBL-lite instance (full ADSP fw kept
+ * OFF the ESP) and Linux attaches to it for battery/audio/sensors.
+ */
 &remoteproc_adsp {
 	qcom,broken-reset;
 };
