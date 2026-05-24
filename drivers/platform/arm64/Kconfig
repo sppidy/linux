@@ -125,5 +125,21 @@ config EC_LENOVO_YOGA_SLIM7X
 	  This driver currently supports reporting input event for microphone
 	  mute button, and reporting device suspend to the EC so it can take
 	  appropriate actions.
+config EC_ASUS_ZENBOOK_A14
+	tristate "ASUS Zenbook A14 (X1P/X1E, UX3407QA/RA) Embedded Controller driver"
+	depends on ARCH_QCOM || COMPILE_TEST
+	depends on I2C
+	depends on HWMON
+	depends on ACPI_PLATFORM_PROFILE
+	help
+	  Driver for the EC on the Snapdragon X1P / X1E based ASUS Zenbook
+	  A14 (UX3407QA, UX3407RA). Provides hwmon (fan tach, PWM, EC
+	  thermistor) and platform_profile (quiet / balanced / performance).
+
+	  Profile writes try the QA DSDT WEBC(0x11) block path first and
+	  fall back to a fan-mode/PWM dressup when the EC firmware does
+	  not honour it (RA).
+
+	  Say M or Y here to include this support.
 
 endif # ARM64_PLATFORM_DEVICES

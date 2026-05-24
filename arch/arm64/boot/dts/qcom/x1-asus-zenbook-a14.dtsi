@@ -209,6 +209,16 @@
 			reusable;
 			linux,cma-default;
 		};
+
+		/* EL2 suspend/resume debug: capture console across the crash-reboot */
+		ramoops@a0000000 {
+			compatible = "ramoops";
+			reg = <0x0 0xa0000000 0x0 0x200000>;
+			console-size = <0x100000>;
+			pmsg-size = <0x40000>;
+			record-size = <0x40000>;
+			ecc-size = <16>;
+		};
 	};
 
 	sound {
@@ -815,6 +825,20 @@
 			regulator-max-microvolt = <1800000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 		};
+
+		vreg_l4m_1p8: ldo4 {
+			regulator-name = "vreg_l4m_1p8";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l7m_2p9: ldo7 {
+			regulator-name = "vreg_l7m_2p9";
+			regulator-min-microvolt = <2912000>;
+			regulator-max-microvolt = <2912000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
 	};
 };
 
@@ -823,17 +847,57 @@
 
 	ports {
 		/*
-		 * port0 => csiphy0
-		 * port1 => csiphy1
-		 * port2 => csiphy2
-		 * port3 => csiphy4
+		 * On Purwa (x1p42100) the camss only has 2 csiphys (0 and 4),
+		 * so the driver's port mapping is:
+		 *   port@0 => csiphy0
+		 *   port@1 => csiphy4
 		 */
-		port@3 {
-			csiphy4_ep: endpoint@4 {
-				reg = <4>;
-				clock-lanes = <7>;
+		port@0 {
+			camss_csiphy0_inep: endpoint@0 {
+				reg = <0>;
+				data-lanes = <0>;
+				remote-endpoint = <&csiphy0_out_ep>;
+			};
+		};
+
+		port@1 {
+			camss_csiphy4_inep: endpoint@0 {
+				reg = <0>;
 				data-lanes = <0 1>;
-				remote-endpoint = <&ov02c10_ep>;
+				remote-endpoint = <&csiphy4_out_ep>;
+			};
+		};
+	};
+};
+
+&cci0 {
+	status = "okay";
+};
+
+&cci0_i2c0 {
+	camera@24 {
+		compatible = "himax,hm1092";
+		reg = <0x24>;
+
+		reset-gpios = <&tlmm 109 GPIO_ACTIVE_LOW>;
+		pinctrl-0 = <&cam_ir_default>;
+		pinctrl-names = "default";
+
+		clocks = <&camcc CAM_CC_MCLK0_CLK>;
+		assigned-clocks = <&camcc CAM_CC_MCLK0_CLK>;
+		assigned-clock-rates = <24000000>;
+
+		orientation = <0>;
+
+		avdd-supply = <&vreg_l7m_2p9>;
+		dvdd-supply = <&vreg_l7m_2p9>;
+		dovdd-supply = <&vreg_l4m_1p8>;
+
+		port {
+			hm1092_ep: endpoint {
+				data-lanes = <1>;
+				link-frequencies = /bits/ 64 <400000000>;
+				remote-endpoint = <&csiphy0_in_ep>;
 			};
 		};
 	};
@@ -869,18 +933,66 @@
 			ov02c10_ep: endpoint {
 				data-lanes = <1 2>;
 				link-frequencies = /bits/ 64 <400000000>;
-				remote-endpoint = <&csiphy4_ep>;
+				remote-endpoint = <&csiphy4_in_ep>;
+			};
+		};
+	};
+};
+
+&csiphy0 {
+	vdda-0p9-supply = <&vreg_l2c_0p8>;
+	vdda-1p2-supply = <&vreg_l1c_1p2>;
+
+	status = "okay";
+
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		port@0 {
+			reg = <0>;
+			csiphy0_in_ep: endpoint {
+				data-lanes = <0>;
+				clock-lanes = <7>;
+				remote-endpoint = <&hm1092_ep>;
+			};
+		};
+
+		port@2 {
+			reg = <2>;
+			csiphy0_out_ep: endpoint {
+				remote-endpoint = <&camss_csiphy0_inep>;
 			};
 		};
 	};
 };
 
 &csiphy4 {
-	vdda-0p8-supply = <&vreg_l2c_0p8>;
+	vdda-0p9-supply = <&vreg_l2c_0p8>;
 	vdda-1p2-supply = <&vreg_l1c_1p2>;
-	phy-type = <PHY_TYPE_DPHY>;
 
 	status = "okay";
+
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		port@0 {
+			reg = <0>;
+			csiphy4_in_ep: endpoint {
+				data-lanes = <0 1>;
+				clock-lanes = <7>;
+				remote-endpoint = <&ov02c10_ep>;
+			};
+		};
+
+		port@2 {
+			reg = <2>;
+			csiphy4_out_ep: endpoint {
+				remote-endpoint = <&camss_csiphy4_inep>;
+			};
+		};
+	};
 };
 
 &i2c0 {
@@ -1000,7 +1112,10 @@
 		pinctrl-names = "default";
 	};
 
-	/* EC @0x5b */
+	embedded-controller@5b {
+		compatible = "asus,zenbook-a14-ec";
+		reg = <0x5b>;
+	};
 };
 
 &i2c7 {
@@ -1368,6 +1483,22 @@
 		bias-disable;
 	};
 
+	cam_ir_default: cam-ir-default-state {
+		mclk-pins {
+			pins = "gpio96";
+			function = "cam_mclk";
+			drive-strength = <16>;
+			bias-disable;
+		};
+
+		reset-n-pins {
+			pins = "gpio109";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-disable;
+		};
+	};
+
 	cam_rgb_default: cam-rgb-default-state {
 		mclk-pins {
 			pins = "gpio100";
@@ -1664,3 +1795,16 @@
 
 	status = "okay";
 };
+
+/*
+ * PM8550 flash LED controller — left disabled.
+ * Tested all four channels individually (led-sources = <1>, <2>, <3>,
+ * <4>) at up to 50 mA torch: no IR glow visible via phone camera, and
+ * flash_fault was empty in every case. PMIC firmware appears to own
+ * the flash block on this platform — the Windows camera flash driver
+ * configures IR LED current through the pmic-glink "WhiteLED PMIC"
+ * path and triggers it via IOCTL_KMD_CAMERA_PLATFORM_GPIO_SYNC_WRITE_WAIT
+ * (CCI_GPIOSyncWrite ncid=1 pinId=6), not by writing PM8550 registers
+ * directly. Re-enabling leds-qcom-flash on this node also regressed
+ * qcom-battmgr on at least one boot.
+ */

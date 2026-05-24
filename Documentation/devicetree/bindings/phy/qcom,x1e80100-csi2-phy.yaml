@@ -23,16 +23,16 @@ properties:
 
   "#phy-cells":
     const: 1
+    description:
+      The single cell specifies the PHY operating mode.
 
   clocks:
-    maxItems: 4
+    maxItems: 2
 
   clock-names:
     items:
-      - const: csiphy
-      - const: csiphy_timer
-      - const: camnoc_axi
-      - const: cpas_ahb
+      - const: core
+      - const: timer
 
   interrupts:
     maxItems: 1
@@ -42,21 +42,80 @@ properties:
 
   power-domains:
     items:
-      - description: TITAN TOP GDSC
-      - description: MXC or MXA voltage rail
       - description: MMCX voltage rail
+      - description: MXC or MXA voltage rail
 
   power-domain-names:
     items:
-      - const: top
-      - const: mx
       - const: mmcx
+      - const: mx
 
-  vdda-0p8-supply:
-    description: Phandle to a 0.8V regulator supply to a PHY.
+  vdda-0p9-supply:
+    description: Phandle to a 0.9V regulator supply to a PHY.
 
   vdda-1p2-supply:
     description: Phandle to 1.2V regulator supply to a PHY.
+
+  ports:
+    $ref: /schemas/graph.yaml#/properties/ports
+
+    properties:
+      port@0:
+        $ref: /schemas/graph.yaml#/$defs/port-base
+        description: Sensor input. Always present.
+
+        properties:
+          endpoint:
+            $ref: /schemas/media/video-interfaces.yaml#
+            unevaluatedProperties: false
+            properties:
+              data-lanes:
+                minItems: 1
+                maxItems: 4
+              clock-lanes:
+                maxItems: 1
+              remote-endpoint: true
+            required:
+              - data-lanes
+              - clock-lanes
+              - remote-endpoint
+
+      port@1:
+        $ref: /schemas/graph.yaml#/$defs/port-base
+        description:
+          Second sensor input. When present, indicates DPHY split mode.
+
+        properties:
+          endpoint:
+            $ref: /schemas/media/video-interfaces.yaml#
+            unevaluatedProperties: false
+            properties:
+              data-lanes:
+                maxItems: 1
+              clock-lanes:
+                maxItems: 1
+              remote-endpoint: true
+            required:
+              - data-lanes
+              - clock-lanes
+              - remote-endpoint
+
+      port@2:
+        $ref: /schemas/graph.yaml#/$defs/port-base
+        description: Output to CAMSS controller.
+
+        properties:
+          endpoint:
+            $ref: /schemas/graph.yaml#/$defs/endpoint-base
+            unevaluatedProperties: false
+            properties:
+              remote-endpoint: true
+            required:
+              - remote-endpoint
+
+    required:
+      - port@0
+      - port@2
 
 required:
   - compatible
@@ -68,8 +127,9 @@ required:
   - operating-points-v2
   - power-domains
   - power-domain-names
-  - vdda-0p8-supply
+  - vdda-0p9-supply
   - vdda-1p2-supply
+  - ports
 
 additionalProperties: false
 
@@ -78,36 +138,48 @@ examples:
     #include <dt-bindings/interrupt-controller/arm-gic.h>
     #include <dt-bindings/clock/qcom,x1e80100-camcc.h>
     #include <dt-bindings/clock/qcom,x1e80100-gcc.h>
-    #include <dt-bindings/phy/phy.h>
     #include <dt-bindings/power/qcom,rpmhpd.h>
 
-    csiphy@ace4000 {
+    csiphy4: csiphy@ace4000 {
         compatible = "qcom,x1e80100-csi2-phy";
         reg = <0x0ace4000 0x2000>;
         #phy-cells = <1>;
 
         clocks = <&camcc CAM_CC_CSIPHY0_CLK>,
-                 <&camcc CAM_CC_CSI0PHYTIMER_CLK>,
-                 <&camcc CAM_CC_CAMNOC_AXI_RT_CLK>,
-                 <&camcc CAM_CC_CPAS_AHB_CLK>;
-        clock-names = "csiphy",
-                      "csiphy_timer",
-                      "camnoc_axi",
-                      "cpas_ahb";
+                 <&camcc CAM_CC_CSI0PHYTIMER_CLK>;
+        clock-names = "core",
+                      "timer";
 
         operating-points-v2 = <&csiphy_opp_table>;
 
         interrupts = <GIC_SPI 477 IRQ_TYPE_EDGE_RISING>;
 
-        power-domains = <&camcc CAM_CC_TITAN_TOP_GDSC>,
-                        <&rpmhpd RPMHPD_MX>,
-                        <&rpmhpd RPMHPD_MMCX>;
-        power-domain-names = "top",
-                             "mx",
-                             "mmcx";
+        power-domains = <&rpmhpd RPMHPD_MMCX>,
+                        <&rpmhpd RPMHPD_MX>;
+        power-domain-names = "mmcx",
+                             "mx";
 
-        vdda-0p8-supply = <&vreg_l2c_0p8>;
+        vdda-0p9-supply = <&vreg_l2c_0p8>;
         vdda-1p2-supply = <&vreg_l1c_1p2>;
+
+        ports {
+            #address-cells = <1>;
+            #size-cells = <0>;
+
+            port@0 {
+                reg = <0>;
+                csiphy0_in_ep: endpoint {
+                    remote-endpoint = <&sensor_out>;
+                };
+            };
+
+            port@2 {
+                reg = <2>;
+                csiphy0_out_ep: endpoint {
+                    remote-endpoint = <&controller_in>;
+                };
+            };
+        };
     };
 
     csiphy_opp_table: opp-table {
@@ -115,19 +187,16 @@ examples:
 
         opp-300000000 {
             opp-hz = /bits/ 64 <300000000>;
-            required-opps = <&rpmhpd_opp_low_svs_d1>,
-                            <&rpmhpd_opp_low_svs_d1>;
+            required-opps = <&rpmhpd_opp_low_svs_d1>;
         };
 
         opp-400000000 {
             opp-hz = /bits/ 64 <400000000>;
-            required-opps = <&rpmhpd_opp_low_svs>,
-                            <&rpmhpd_opp_low_svs>;
+            required-opps = <&rpmhpd_opp_low_svs>;
         };
 
         opp-480000000 {
             opp-hz = /bits/ 64 <480000000>;
-            required-opps = <&rpmhpd_opp_low_svs>,
-                            <&rpmhpd_opp_low_svs>;
+            required-opps = <&rpmhpd_opp_low_svs>;
         };
     };

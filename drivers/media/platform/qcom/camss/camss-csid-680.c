@@ -163,6 +163,25 @@
 #define CSID_RDI_LINE_DROP_PATTERN(rdi)				(0x560 + 0x100 * (rdi))
 #define CSID_RDI_LINE_DROP_PERIOD(rdi)				(0x564 + 0x100 * (rdi))
 
+/* IPP path (port 3 on non-lite) */
+#define CSID_IPP_CFG0						0x300
+#define CSID_IPP_CTRL						0x304
+#define CSID_IPP_CFG1						0x310
+#define CSID_IPP_FRM_DROP_PERIOD				0x378
+#define CSID_IPP_IRQ_SUBSAMPLE_PATTERN				0x37c
+#define CSID_IPP_IRQ_SUBSAMPLE_PERIOD				0x380
+
+/* IPP CFG1 bits */
+#define IPP_CFG1_TIMESTAMP_STB_FRAME				0
+#define IPP_CFG1_TIMESTAMP_EN					BIT(9)
+#define IPP_CFG1_DROP_H_EN					BIT(10)
+#define IPP_CFG1_DROP_V_EN					BIT(11)
+#define IPP_CFG1_CROP_H_EN					BIT(12)
+#define IPP_CFG1_CROP_V_EN					BIT(13)
+
+#define IPP_PORT						3
+#define IS_IPP(port)						(port == IPP_PORT)
+
 static inline int reg_update_rdi(struct csid_device *csid, int n)
 {
 	return BIT(4 + n) + BIT(20 + n);
@@ -219,13 +238,14 @@ static void __csid_configure_top(struct csid_device *csid)
 	    CSID_TOP_IO_PATH_CFG0(csid->id));
 }
 
-static void __csid_configure_rdi_stream(struct csid_device *csid, u8 enable, u8 vc)
+static void __csid_configure_rdi_stream(struct csid_device *csid, u8 enable, u8 port, u8 vc)
 {
-	struct v4l2_mbus_framefmt *input_format = &csid->fmt[MSM_CSID_PAD_FIRST_SRC + vc];
+	struct v4l2_mbus_framefmt *input_format = &csid->fmt[MSM_CSID_PAD_FIRST_SRC + port];
 	const struct csid_format_info *format = csid_get_fmt_entry(csid->res->formats->formats,
 								   csid->res->formats->nformats,
 								   input_format->code);
 	u8 lane_cnt = csid->phy.lane_cnt;
+	u32 offset;
 	u8 dt_id;
 	u32 val;
 
@@ -233,55 +253,98 @@ static void __csid_configure_rdi_stream(struct csid_device *csid, u8 enable, u8 
 		lane_cnt = 4;
 
 	val = 0;
-	writel(val, csid->base + CSID_RDI_FRM_DROP_PERIOD(vc));
+
+	if (IS_IPP(port)) {
+		offset = CSID_IPP_CFG0;
+	} else {
+		offset = CSID_RDI_FRM_DROP_PERIOD(port);
+	}
+	writel(val, csid->base + offset);
 
 	/*
 	 * DT_ID is a two bit bitfield that is concatenated with
 	 * the four least significant bits of the five bit VC
 	 * bitfield to generate an internal CID value.
 	 *
-	 * CSID_RDI_CFG0(vc)
+	 * CSID_RDI_CFG0(port)
 	 * DT_ID : 28:27
 	 * VC    : 26:22
 	 * DT    : 21:16
 	 *
 	 * CID   : VC 3:0 << 2 | DT_ID 1:0
 	 */
-	dt_id = vc & 0x03;
+	dt_id = port & 0x03;
 
 	/* note: for non-RDI path, this should be format->decode_format */
 	val |= DECODE_FORMAT_PAYLOAD_ONLY << RDI_CFG0_DECODE_FORMAT;
 	val |= format->data_type << RDI_CFG0_DATA_TYPE;
 	val |= vc << RDI_CFG0_VIRTUAL_CHANNEL;
 	val |= dt_id << RDI_CFG0_DT_ID;
-	writel(val, csid->base + CSID_RDI_CFG0(vc));
 
-	val = RDI_CFG1_TIMESTAMP_STB_FRAME;
-	val |= RDI_CFG1_BYTE_CNTR_EN;
-	val |= RDI_CFG1_TIMESTAMP_EN;
-	val |= RDI_CFG1_DROP_H_EN;
-	val |= RDI_CFG1_DROP_V_EN;
-	val |= RDI_CFG1_CROP_H_EN;
-	val |= RDI_CFG1_CROP_V_EN;
-	val |= RDI_CFG1_PACKING_MIPI;
+	if (IS_IPP(port)) {
+		offset = CSID_IPP_CFG0;
+	} else {
+		offset = CSID_RDI_CFG0(port);
+	}
+	writel(val, csid->base + offset);
 
-	writel(val, csid->base + CSID_RDI_CFG1(vc));
+	if (IS_IPP(port)) {
+		val = IPP_CFG1_TIMESTAMP_STB_FRAME;
+		val |= IPP_CFG1_TIMESTAMP_EN;
+		val |= IPP_CFG1_DROP_H_EN;
+		val |= IPP_CFG1_DROP_V_EN;
+		val |= IPP_CFG1_CROP_H_EN;
+		val |= IPP_CFG1_CROP_V_EN;
+		offset = CSID_IPP_CFG1;
+	} else {
+		val = RDI_CFG1_TIMESTAMP_STB_FRAME;
+		val |= RDI_CFG1_BYTE_CNTR_EN;
+		val |= RDI_CFG1_TIMESTAMP_EN;
+		val |= RDI_CFG1_DROP_H_EN;
+		val |= RDI_CFG1_DROP_V_EN;
+		val |= RDI_CFG1_CROP_H_EN;
+		val |= RDI_CFG1_CROP_V_EN;
+		val |= RDI_CFG1_PACKING_MIPI;
+		offset = CSID_RDI_CFG1(port);
+	}
+	writel(val, csid->base + offset);
 
+
+	if (IS_IPP(port)) {
+		offset = CSID_IPP_IRQ_SUBSAMPLE_PERIOD;
+	} else {
+		offset = CSID_RDI_IRQ_SUBSAMPLE_PERIOD(port);
+	}
 	val = 0;
-	writel(val, csid->base + CSID_RDI_IRQ_SUBSAMPLE_PERIOD(vc));
+	writel(val, csid->base + offset);
 
+	if (IS_IPP(port)) {
+		offset = CSID_IPP_IRQ_SUBSAMPLE_PATTERN;
+	} else {
+		offset = CSID_RDI_IRQ_SUBSAMPLE_PATTERN(port);
+	}
 	val = 1;
-	writel(val, csid->base + CSID_RDI_IRQ_SUBSAMPLE_PATTERN(vc));
+	writel(val, csid->base + offset);
 
+	if (IS_IPP(port)) {
+		offset = CSID_IPP_CTRL;
+	} else {
+		offset = CSID_RDI_CTRL(port);
+	}
 	val = 0;
-	writel(val, csid->base + CSID_RDI_CTRL(vc));
+	writel(val, csid->base + offset);
 
-	val = readl(csid->base + CSID_RDI_CFG0(vc));
+	if (IS_IPP(port)) {
+		offset = CSID_IPP_CFG0;
+	} else {
+		offset = CSID_RDI_CFG0(port);
+	}
+	val = readl(csid->base + offset);
 	if (enable)
 		val |= RDI_CFG0_ENABLE;
 	else
 		val &= ~RDI_CFG0_ENABLE;
-	writel(val, csid->base + CSID_RDI_CFG0(vc));
+	writel(val, csid->base + offset);
 }
 
 static void csid_configure_stream(struct csid_device *csid, u8 enable)
@@ -290,11 +353,11 @@ static void csid_configure_stream(struct csid_device *csid, u8 enable)
 
 	__csid_configure_top(csid);
 
-       /* Loop through all enabled VCs and configure stream for each */
+	/* Loop through all enabled ports and configure a stream for each */
 	for (i = 0; i < MSM_CSID_MAX_SRC_STREAMS; i++) {
-		if (csid->phy.en_vc & BIT(i)) {
-			__csid_configure_rdi_stream(csid, enable, i);
-			__csid_configure_rx(csid, &csid->phy, i);
+		if (csid->phy.en_port & BIT(i)) {
+			__csid_configure_rdi_stream(csid, enable, i, 0);
+			__csid_configure_rx(csid, &csid->phy, 0);
 			__csid_ctrl_rdi(csid, enable, i);
 		}
 	}

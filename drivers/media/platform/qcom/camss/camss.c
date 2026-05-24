@@ -16,6 +16,7 @@
 #include <linux/of.h>
 #include <linux/of_device.h>
 #include <linux/of_graph.h>
+#include <linux/of_platform.h>
 #include <linux/pm_runtime.h>
 #include <linux/pm_domain.h>
 #include <linux/slab.h>
@@ -3935,11 +3936,11 @@ static const struct camss_subdev_resources csid_res_x1e80100[] = {
 			   "cpas_fast_ahb", "csid", "csid_csiphy_rx" },
 		.clock_rate = { { 0 },
 				{ 0 },
-				{ 64000000, 80000000 },
+				{ 80000000 },
 				{ 80000000,  100000000, 200000000,
 				  300000000, 400000000 },
-				{ 300000000, 400000000, 480000000 },
-				{ 300000000, 400000000, 480000000 }, },
+				{ 300000000, 400000000 },
+				{ 300000000, 400000000 }, },
 		.reg = { "csid0" },
 		.interrupt = { "csid0" },
 		.csid = {
@@ -3955,11 +3956,11 @@ static const struct camss_subdev_resources csid_res_x1e80100[] = {
 			   "cpas_fast_ahb", "csid", "csid_csiphy_rx" },
 		.clock_rate = { { 0 },
 				{ 0 },
-				{ 64000000, 80000000 },
+				{ 80000000 },
 				{ 80000000,  100000000, 200000000,
 				  300000000, 400000000 },
-				{ 300000000, 400000000, 480000000 },
-				{ 300000000, 400000000, 480000000 }, },
+				{ 300000000, 400000000 },
+				{ 300000000, 400000000 }, },
 		.reg = { "csid1" },
 		.interrupt = { "csid1" },
 		.csid = {
@@ -3975,11 +3976,11 @@ static const struct camss_subdev_resources csid_res_x1e80100[] = {
 			   "cpas_fast_ahb", "csid", "csid_csiphy_rx" },
 		.clock_rate = { { 0 },
 				{ 0 },
-				{ 64000000, 80000000 },
+				{ 80000000 },
 				{ 80000000,  100000000, 200000000,
 				  300000000, 400000000 },
-				{ 300000000, 400000000, 480000000 },
-				{ 300000000, 400000000, 480000000 }, },
+				{ 300000000, 400000000 },
+				{ 300000000, 400000000 }, },
 		.reg = { "csid2" },
 		.interrupt = { "csid2" },
 		.csid = {
@@ -3995,11 +3996,11 @@ static const struct camss_subdev_resources csid_res_x1e80100[] = {
 			   "cpas_fast_ahb", "csid", "csid_csiphy_rx" },
 		.clock_rate = { { 0 },
 				{ 0 },
-				{ 64000000, 80000000 },
+				{ 80000000 },
 				{ 80000000,  100000000, 200000000,
 				  300000000, 400000000 },
-				{ 300000000, 400000000, 480000000 },
-				{ 300000000, 400000000, 480000000 }, },
+				{ 300000000, 400000000 },
+				{ 300000000, 400000000 }, },
 		.reg = { "csid_lite0" },
 		.interrupt = { "csid_lite0" },
 		.csid = {
@@ -4016,11 +4017,11 @@ static const struct camss_subdev_resources csid_res_x1e80100[] = {
 			   "cpas_fast_ahb", "csid", "csid_csiphy_rx" },
 		.clock_rate = { { 0 },
 				{ 0 },
-				{ 64000000, 80000000 },
+				{ 80000000 },
 				{ 80000000,  100000000, 200000000,
 				  300000000, 400000000 },
-				{ 300000000, 400000000, 480000000 },
-				{ 300000000, 400000000, 480000000 }, },
+				{ 300000000, 400000000 },
+				{ 300000000, 400000000 }, },
 
 		.reg = { "csid_lite1" },
 		.interrupt = { "csid_lite1" },
@@ -4093,8 +4094,8 @@ static const struct camss_subdev_resources vfe_res_x1e80100[] = {
 				{ 0 },
 				{ 0 },
 				{ 0 },
-				{ 266666667, 400000000, 480000000 },
-				{ 266666667, 400000000, 480000000 }, },
+				{ 266666667, 400000000 },
+				{ 266666667, 400000000 }, },
 		.reg = { "vfe_lite0" },
 		.interrupt = { "vfe_lite0" },
 		.vfe = {
@@ -4116,8 +4117,8 @@ static const struct camss_subdev_resources vfe_res_x1e80100[] = {
 				{ 0 },
 				{ 0 },
 				{ 0 },
-				{ 266666667, 400000000, 480000000 },
-				{ 266666667, 400000000, 480000000 }, },
+				{ 266666667, 400000000 },
+				{ 266666667, 400000000 }, },
 		.reg = { "vfe_lite1" },
 		.interrupt = { "vfe_lite1" },
 		.vfe = {
@@ -4155,6 +4156,98 @@ static const struct resources_icc icc_res_x1e80100[] = {
 
 static const struct resources_wrapper csid_wrapper_res_x1e80100 = {
 	.reg = "csid_wrapper",
+};
+
+static const struct camss_subdev_resources csiphy_res_x1p42100[] = {
+	/* CSIPHY0 */
+	{
+		.csiphy = {
+			.id = 0,
+			.hw_ops = &csiphy_ops_3ph_1_0,
+			.formats = &csiphy_formats_sdm845
+		},
+	},
+	/* CSIPHY4 */
+	{
+		.csiphy = {
+			.id = 4,
+			.hw_ops = &csiphy_ops_3ph_1_0,
+			.formats = &csiphy_formats_sdm845
+		},
+	},
+};
+
+static const struct camss_subdev_resources vfe_res_x1p42100[] = {
+	/* IFE0 */
+	{
+		.regulators = {},
+		.clock = {"camnoc_rt_axi", "camnoc_nrt_axi", "cpas_ahb",
+			  "cpas_fast_ahb", "cpas_vfe0", "vfe0_fast_ahb",
+			  "vfe0" },
+		.clock_rate = { { 400000000 },
+				{ 0 },
+				{ 0 },
+				{ 0 },
+				{ 0 },
+				{ 0 },
+				{ 345600000, 432000000, 594000000, 675000000,
+				  727000000 }, },
+		.reg = { "vfe0" },
+		.interrupt = { "vfe0" },
+		.vfe = {
+			.line_num = 4,
+			.pd_name = "ife0",
+			.hw_ops = &vfe_ops_680,
+			.formats_rdi = &vfe_formats_rdi_845,
+			.formats_pix = &vfe_formats_pix_845
+		},
+	},
+	/* IFE_LITE_0 */
+	{
+		.regulators = {},
+		.clock = { "camnoc_rt_axi", "camnoc_nrt_axi", "cpas_ahb",
+			   "vfe_lite_ahb", "cpas_vfe_lite", "vfe_lite",
+			   "vfe_lite_csid" },
+		.clock_rate = { { 400000000 },
+				{ 0 },
+				{ 0 },
+				{ 0 },
+				{ 0 },
+				{ 266666667, 400000000 },
+				{ 266666667, 400000000 }, },
+		.reg = { "vfe_lite0" },
+		.interrupt = { "vfe_lite0" },
+		.vfe = {
+			.is_lite = true,
+			.line_num = 4,
+			.hw_ops = &vfe_ops_680,
+			.formats_rdi = &vfe_formats_rdi_845,
+			.formats_pix = &vfe_formats_pix_845
+		},
+	},
+	/* IFE_LITE_1 */
+	{
+		.regulators = {},
+		.clock = { "camnoc_rt_axi", "camnoc_nrt_axi", "cpas_ahb",
+			   "vfe_lite_ahb", "cpas_vfe_lite", "vfe_lite",
+			   "vfe_lite_csid" },
+		.clock_rate = { { 400000000 },
+				{ 0 },
+				{ 0 },
+				{ 0 },
+				{ 0 },
+				{ 266666667, 400000000 },
+				{ 266666667, 400000000 }, },
+		.reg = { "vfe_lite1" },
+		.interrupt = { "vfe_lite1" },
+		.vfe = {
+			.is_lite = true,
+			.line_num = 4,
+			.hw_ops = &vfe_ops_680,
+			.formats_rdi = &vfe_formats_rdi_845,
+			.formats_pix = &vfe_formats_pix_845
+		},
+	},
 };
 
 /*
@@ -4226,14 +4319,6 @@ struct media_pad *camss_find_sensor_pad(struct media_entity *entity)
 
 	while (1) {
 		pad = &entity->pads[0];
-
-		/*
-		 * Work around unresolved bug in camss (or v4l2) which can
-		 * result in pad being NULL here.
-		 */
-		if (WARN_ON(!pad))
-			return NULL;
-
 		if (!(pad->flags & MEDIA_PAD_FL_SINK))
 			return NULL;
 
@@ -4422,14 +4507,51 @@ static int camss_parse_endpoint_node(struct device *dev,
 static int camss_parse_ports(struct camss *camss)
 {
 	struct device *dev = camss->dev;
+	const struct camss_resources *res = camss->res;
 	struct fwnode_handle *fwnode = dev_fwnode(dev), *ep;
 	int ret;
 
 	fwnode_graph_for_each_endpoint(fwnode, ep) {
 		struct camss_async_subdev *csd;
+		struct fwnode_handle *remote;
 
-		csd = v4l2_async_nf_add_fwnode_remote(&camss->notifier, ep,
-						      typeof(*csd));
+		if (!fwnode_device_is_available(ep))
+			continue;
+
+		if (res->legacy_phy) {
+			csd = v4l2_async_nf_add_fwnode_remote(&camss->notifier, ep,
+							      typeof(*csd));
+		} else {
+			struct fwnode_handle *phy_out, *phy_node, *phy_in, *sensor_ep;
+
+			phy_out = fwnode_graph_get_remote_endpoint(ep);
+			if (!phy_out)
+				continue;
+
+			phy_node = fwnode_graph_get_port_parent(phy_out);
+			fwnode_handle_put(phy_out);
+			if (!phy_node)
+				continue;
+
+			phy_in = fwnode_graph_get_endpoint_by_id(phy_node, 0, 0, 0);
+			fwnode_handle_put(phy_node);
+			if (!phy_in)
+				continue;
+
+			sensor_ep = fwnode_graph_get_remote_endpoint(phy_in);
+			fwnode_handle_put(phy_in);
+			if (!sensor_ep)
+				continue;
+
+			csd = v4l2_async_nf_add_fwnode(&camss->notifier, sensor_ep,
+						struct camss_async_subdev);
+			fwnode_handle_put(sensor_ep);
+			if (IS_ERR(csd)) {
+				ret = PTR_ERR(csd);
+				goto err_cleanup;
+			}
+		}
+
 		if (IS_ERR(csd)) {
 			ret = PTR_ERR(csd);
 			goto err_cleanup;
@@ -4458,29 +4580,18 @@ static int camss_init_subdevices(struct camss *camss)
 {
 	struct platform_device *pdev = to_platform_device(camss->dev);
 	const struct camss_resources *res = camss->res;
-	struct device_node *phy_np;
 	unsigned int i;
 	int ret;
 
-	for (i = 0; i < camss->res->csiphy_num; i++) {
-		phy_np = of_parse_phandle(pdev->dev.of_node, "phys", i);
-		if (phy_np && of_device_is_available(phy_np)) {
+	if (!res->legacy_phy) {
+		for (i = 0; i < camss->res->csiphy_num; i++) {
 			ret = msm_csiphy_subdev_init(camss, &camss->csiphy[i],
 						     &res->csiphy_res[i],
 						     res->csiphy_res[i].csiphy.id);
-			if (ret < 0) {
-				dev_err(camss->dev,
-					"Failed to init csiphy%d sub-device: %d\n",
-					i, ret);
+			if (ret < 0)
 				return ret;
-			}
 		}
-	}
-
-	if (!phy_np) {
-		if (!res->legacy_phy)
-			return -ENODEV;
-
+	} else {
 		for (i = 0; i < camss->res->csiphy_num; i++) {
 			ret = msm_csiphy_subdev_init_legacy(camss, &camss->csiphy[i],
 							    &res->csiphy_res[i],
@@ -4968,6 +5079,8 @@ static int camss_probe(struct platform_device *pdev)
 	if (!camss)
 		return -ENOMEM;
 
+	devm_of_platform_populate(dev);
+
 	camss->res = of_device_get_match_data(dev);
 
 	atomic_set(&camss->ref_count, 0);
@@ -5324,7 +5437,6 @@ static const struct camss_resources sm8650_resources = {
 static const struct camss_resources x1e80100_resources = {
 	.version = CAMSS_X1E80100,
 	.pd_name = "top",
-	.legacy_phy = true,
 	.csiphy_res = csiphy_res_x1e80100,
 	.csid_res = csid_res_x1e80100,
 	.vfe_res = vfe_res_x1e80100,
@@ -5334,6 +5446,20 @@ static const struct camss_resources x1e80100_resources = {
 	.csiphy_num = ARRAY_SIZE(csiphy_res_x1e80100),
 	.csid_num = ARRAY_SIZE(csid_res_x1e80100),
 	.vfe_num = ARRAY_SIZE(vfe_res_x1e80100),
+};
+
+static const struct camss_resources x1p42100_resources = {
+	.version = CAMSS_X1P42100,
+	.pd_name = "top",
+	.csiphy_res = csiphy_res_x1p42100,
+	.csid_res = csid_res_x1e80100,
+	.vfe_res = vfe_res_x1p42100,
+	.csid_wrapper_res = &csid_wrapper_res_x1e80100,
+	.icc_res = icc_res_x1e80100,
+	.icc_path_num = ARRAY_SIZE(icc_res_x1e80100),
+	.csiphy_num = ARRAY_SIZE(csiphy_res_x1p42100),
+	.csid_num = ARRAY_SIZE(csid_res_x1e80100),
+	.vfe_num = ARRAY_SIZE(vfe_res_x1p42100),
 };
 
 static const struct of_device_id camss_dt_match[] = {
@@ -5354,6 +5480,7 @@ static const struct of_device_id camss_dt_match[] = {
 	{ .compatible = "qcom,sm8550-camss", .data = &sm8550_resources },
 	{ .compatible = "qcom,sm8650-camss", .data = &sm8650_resources },
 	{ .compatible = "qcom,x1e80100-camss", .data = &x1e80100_resources },
+	{ .compatible = "qcom,x1p42100-camss", .data = &x1p42100_resources },
 	{ }
 };
 
