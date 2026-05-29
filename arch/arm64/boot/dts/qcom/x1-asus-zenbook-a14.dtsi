@@ -1797,14 +1797,27 @@
 };
 
 /*
- * PM8550 flash LED controller — left disabled.
- * Tested all four channels individually (led-sources = <1>, <2>, <3>,
- * <4>) at up to 50 mA torch: no IR glow visible via phone camera, and
- * flash_fault was empty in every case. PMIC firmware appears to own
- * the flash block on this platform — the Windows camera flash driver
- * configures IR LED current through the pmic-glink "WhiteLED PMIC"
- * path and triggers it via IOCTL_KMD_CAMERA_PLATFORM_GPIO_SYNC_WRITE_WAIT
- * (CCI_GPIOSyncWrite ncid=1 pinId=6), not by writing PM8550 registers
- * directly. Re-enabling leds-qcom-flash on this node also regressed
- * qcom-battmgr on at least one boot.
+ * IR illuminator for the HM1092 Windows-Hello camera, wired to PM8550 flash
+ * channel 4. Confirmed 2026-05-29: enabling this channel and driving ~150 mA+
+ * lights the front IR LED (visible through a phone's NIR camera); Windows runs
+ * it at 700 mA. No GPIO/CCI gate is required — current alone drives it. (An
+ * earlier sweep mistakenly concluded the block was "PMIC-firmware-owned"
+ * because it only tested <=50 mA torch on channel 4, too dim to see.)
+ *
+ * Exposed as a standalone flash-class LED ("ir:flash"); deliberately NOT linked
+ * to the sensor via flash-leds, because firing this channel perturbs a shared
+ * PM8550 rail and can blank an in-flight HM1092 capture — illuminate+capture
+ * coexistence (e.g. for howdy) is a separate problem to solve.
  */
+&pm8550_flash {
+	status = "okay";
+
+	led-0 {
+		function = LED_FUNCTION_FLASH;
+		color = <LED_COLOR_ID_IR>;
+		led-sources = <4>;
+		led-max-microamp = <180000>;
+		flash-max-microamp = <700000>;
+		flash-max-timeout-us = <1280000>;
+	};
+};
