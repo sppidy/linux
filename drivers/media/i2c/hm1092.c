@@ -39,7 +39,7 @@
  * never get stuck on if teardown is missed.
  */
 #define HM1092_FLASH_TIMEOUT_US		1200000	/* < PM8550 1.28 s hw cap */
-#define HM1092_FLASH_REFIRE_MS		1000	/* re-fire before timeout */
+#define HM1092_FLASH_REFIRE_MS		800	/* re-fire well before timeout */
 
 struct hm1092_mode {
 	u32 width;
@@ -93,16 +93,34 @@ struct hm1092 {
 	struct delayed_work flash_work;
 };
 
-static void hm1092_flash_enable(struct hm1092 *hm1092)
+/*
+ * (Re)arm and fire the flash at full current. The qcom flash controller does an
+ * internal disable+enable on each strobe and the hardware safety-timeout turns
+ * the LED off on its own, so brightness/timeout must be programmed every time or
+ * the re-fire is a no-op. Re-firing well within the timeout keeps the LED lit
+ * continuously and near its (slightly declining) peak brightness.
+ */
+static void hm1092_flash_fire(struct hm1092 *hm1092)
 {
 	struct led_classdev_flash *flash = hm1092->flash;
 
-	if (!flash)
-		return;
-
+	/*
+	 * Release the controller's flash-current accounting first (a bare
+	 * re-strobe is treated as "current still in use" and re-fires at 0 mA),
+	 * then re-arm at full current and strobe.
+	 */
+	led_set_flash_strobe(flash, false);
 	led_set_flash_brightness(flash, flash->brightness.max);
 	led_set_flash_timeout(flash, HM1092_FLASH_TIMEOUT_US);
 	led_set_flash_strobe(flash, true);
+}
+
+static void hm1092_flash_enable(struct hm1092 *hm1092)
+{
+	if (!hm1092->flash)
+		return;
+
+	hm1092_flash_fire(hm1092);
 	schedule_delayed_work(&hm1092->flash_work,
 			      msecs_to_jiffies(HM1092_FLASH_REFIRE_MS));
 }
@@ -116,13 +134,12 @@ static void hm1092_flash_disable(struct hm1092 *hm1092)
 	led_set_flash_strobe(hm1092->flash, false);
 }
 
-/* Re-fire the flash before the hardware safety-timeout expires. */
 static void hm1092_flash_work(struct work_struct *work)
 {
 	struct hm1092 *hm1092 =
 		container_of(to_delayed_work(work), struct hm1092, flash_work);
 
-	led_set_flash_strobe(hm1092->flash, true);
+	hm1092_flash_fire(hm1092);
 	schedule_delayed_work(&hm1092->flash_work,
 			      msecs_to_jiffies(HM1092_FLASH_REFIRE_MS));
 }
