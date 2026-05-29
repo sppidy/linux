@@ -11,9 +11,12 @@
 #include <linux/delay.h>
 #include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
+#include <linux/led-class-flash.h>
+#include <linux/leds.h>
 #include <linux/module.h>
 #include <linux/pm_runtime.h>
 #include <linux/regulator/consumer.h>
+#include <linux/workqueue.h>
 #include <media/v4l2-cci.h>
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-device.h>
@@ -26,6 +29,17 @@
 #define HM1092_BITS_PER_SAMPLE		10
 
 #define HM1092_REG_STREAM		CCI_REG8(0x0100)
+
+/*
+ * IR illuminator: the HM1092 has no usable hardware strobe output (its Chromatix
+ * strobe registers are unset), so the sensor driver drives the associated flash
+ * LED itself while streaming. A sustained 700 mA flash illuminates capture for
+ * the full hardware safety window without disturbing the pipeline; we re-fire it
+ * before that window expires. The 1.28 s hw safety-timeout means the LED can
+ * never get stuck on if teardown is missed.
+ */
+#define HM1092_FLASH_TIMEOUT_US		1200000	/* < PM8550 1.28 s hw cap */
+#define HM1092_FLASH_REFIRE_MS		1000	/* re-fire before timeout */
 
 struct hm1092_mode {
 	u32 width;
@@ -73,7 +87,45 @@ struct hm1092 {
 	struct v4l2_ctrl *hblank;
 	struct v4l2_ctrl *vblank;
 	u8 mipi_lanes;
+
+	/* Optional IR illuminator driven while streaming (see flash notes). */
+	struct led_classdev_flash *flash;
+	struct delayed_work flash_work;
 };
+
+static void hm1092_flash_enable(struct hm1092 *hm1092)
+{
+	struct led_classdev_flash *flash = hm1092->flash;
+
+	if (!flash)
+		return;
+
+	led_set_flash_brightness(flash, flash->brightness.max);
+	led_set_flash_timeout(flash, HM1092_FLASH_TIMEOUT_US);
+	led_set_flash_strobe(flash, true);
+	schedule_delayed_work(&hm1092->flash_work,
+			      msecs_to_jiffies(HM1092_FLASH_REFIRE_MS));
+}
+
+static void hm1092_flash_disable(struct hm1092 *hm1092)
+{
+	if (!hm1092->flash)
+		return;
+
+	cancel_delayed_work_sync(&hm1092->flash_work);
+	led_set_flash_strobe(hm1092->flash, false);
+}
+
+/* Re-fire the flash before the hardware safety-timeout expires. */
+static void hm1092_flash_work(struct work_struct *work)
+{
+	struct hm1092 *hm1092 =
+		container_of(to_delayed_work(work), struct hm1092, flash_work);
+
+	led_set_flash_strobe(hm1092->flash, true);
+	schedule_delayed_work(&hm1092->flash_work,
+			      msecs_to_jiffies(HM1092_FLASH_REFIRE_MS));
+}
 
 static inline struct hm1092 *to_hm1092(struct v4l2_subdev *sd)
 {
@@ -254,6 +306,8 @@ static int hm1092_enable_streams(struct v4l2_subdev *sd,
 				ARRAY_SIZE(hm1092_start_streaming));
 	if (ret)
 		dev_err(hm1092->dev, "failed to start streaming\n");
+	else
+		hm1092_flash_enable(hm1092);
 
 out:
 	if (ret)
@@ -269,6 +323,7 @@ static int hm1092_disable_streams(struct v4l2_subdev *sd,
 	struct hm1092 *hm1092 = to_hm1092(sd);
 	int ret = 0;
 
+	hm1092_flash_disable(hm1092);
 	cci_write(hm1092->regmap, HM1092_REG_STREAM, 0, &ret);
 	pm_runtime_put(hm1092->dev);
 
@@ -476,6 +531,31 @@ static void hm1092_remove(struct i2c_client *client)
 	}
 }
 
+/* Optional: grab the IR illuminator flash LED referenced by the "leds" phandle. */
+static int hm1092_get_flash(struct hm1092 *hm1092)
+{
+	struct led_classdev *cdev;
+
+	cdev = devm_of_led_get_optional(hm1092->dev, 0);
+	if (IS_ERR(cdev))
+		return dev_err_probe(hm1092->dev, PTR_ERR(cdev),
+				     "failed to get IR illuminator LED\n");
+	if (!cdev)
+		return 0;	/* no illuminator wired; capture still works */
+
+	if (!(cdev->flags & LED_DEV_CAP_FLASH)) {
+		dev_warn(hm1092->dev,
+			 "'leds' phandle is not a flash LED; IR illuminator disabled\n");
+		return 0;
+	}
+
+	hm1092->flash = lcdev_to_flcdev(cdev);
+	INIT_DELAYED_WORK(&hm1092->flash_work, hm1092_flash_work);
+	dev_dbg(hm1092->dev, "IR illuminator flash linked (max %u uA)\n",
+		hm1092->flash->brightness.max);
+	return 0;
+}
+
 static int hm1092_probe(struct i2c_client *client)
 {
 	struct hm1092 *hm1092;
@@ -487,6 +567,10 @@ static int hm1092_probe(struct i2c_client *client)
 		return -ENOMEM;
 
 	hm1092->dev = &client->dev;
+
+	ret = hm1092_get_flash(hm1092);
+	if (ret)
+		return ret;
 
 	hm1092->img_clk = devm_v4l2_sensor_clk_get(hm1092->dev, NULL);
 	if (IS_ERR(hm1092->img_clk))
