@@ -5939,19 +5939,29 @@
 			csiphy_opp_table: opp-table {
 				compatible = "operating-points-v2";
 
+				/*
+				 * Each csiphy attaches two power domains (mmcx, mx),
+				 * so every OPP must carry one required-opp per domain
+				 * (index 0 -> mmcx, index 1 -> mx). MX mirrors the MMCX
+				 * corner; omitting it makes the PHY driver read an
+				 * out-of-range required pstate for the mx domain.
+				 */
 				opp-300000000 {
 					opp-hz = /bits/ 64 <300000000>;
-					required-opps = <&rpmhpd_opp_low_svs_d1>;
+					required-opps = <&rpmhpd_opp_low_svs_d1>,
+							<&rpmhpd_opp_low_svs_d1>;
 				};
 
 				opp-400000000 {
 					opp-hz = /bits/ 64 <400000000>;
-					required-opps = <&rpmhpd_opp_low_svs>;
+					required-opps = <&rpmhpd_opp_low_svs>,
+							<&rpmhpd_opp_low_svs>;
 				};
 
 				opp-480000000 {
 					opp-hz = /bits/ 64 <480000000>;
-					required-opps = <&rpmhpd_opp_low_svs>;
+					required-opps = <&rpmhpd_opp_low_svs>,
+							<&rpmhpd_opp_low_svs>;
 				};
 			};
 		};
