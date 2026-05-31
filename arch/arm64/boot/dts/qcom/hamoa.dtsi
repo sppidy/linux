@@ -5853,10 +5853,10 @@
 
 				interrupts = <GIC_SPI 477 IRQ_TYPE_EDGE_RISING>;
 
-				power-domains = <&rpmhpd RPMHPD_MXC>,
-						<&rpmhpd RPMHPD_MMCX>;
-				power-domain-names = "mx",
-						     "mmcx";
+				power-domains = <&rpmhpd RPMHPD_MMCX>,
+						<&rpmhpd RPMHPD_MXC>;
+				power-domain-names = "mmcx",
+						     "mx";
 
 				#phy-cells = <1>;
 
@@ -5876,10 +5876,10 @@
 
 				interrupts = <GIC_SPI 478 IRQ_TYPE_EDGE_RISING>;
 
-				power-domains = <&rpmhpd RPMHPD_MXC>,
-						<&rpmhpd RPMHPD_MMCX>;
-				power-domain-names = "mx",
-						     "mmcx";
+				power-domains = <&rpmhpd RPMHPD_MMCX>,
+						<&rpmhpd RPMHPD_MXC>;
+				power-domain-names = "mmcx",
+						     "mx";
 
 				#phy-cells = <1>;
 
@@ -5899,10 +5899,10 @@
 
 				interrupts = <GIC_SPI 479 IRQ_TYPE_EDGE_RISING>;
 
-				power-domains = <&rpmhpd RPMHPD_MXC>,
-						<&rpmhpd RPMHPD_MMCX>;
-				power-domain-names = "mx",
-						     "mmcx";
+				power-domains = <&rpmhpd RPMHPD_MMCX>,
+						<&rpmhpd RPMHPD_MXC>;
+				power-domain-names = "mmcx",
+						     "mx";
 
 				#phy-cells = <1>;
 
@@ -5922,10 +5922,10 @@
 
 				interrupts = <GIC_SPI 122 IRQ_TYPE_EDGE_RISING>;
 
-				power-domains = <&rpmhpd RPMHPD_MX>,
-						<&rpmhpd RPMHPD_MMCX>;
-				power-domain-names = "mx",
-						     "mmcx";
+				power-domains = <&rpmhpd RPMHPD_MMCX>,
+						<&rpmhpd RPMHPD_MX>;
+				power-domain-names = "mmcx",
+						     "mx";
 
 				#phy-cells = <1>;
 
