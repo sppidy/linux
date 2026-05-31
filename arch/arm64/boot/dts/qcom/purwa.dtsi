@@ -266,3 +266,15 @@
 &camss {
 	compatible = "qcom,x1p42100-camss";
 };
+
+/*
+ * PLL8 in the camcc-x1e80100 driver fails to lock on Purwa silicon
+ * ("Lucid PLL latch failed"). Several RCGs default to PLL8 as parent
+ * (slow_ahb at 64 MHz, cci_0 at 30 MHz). Pin slow_ahb to the next-best
+ * PLL0-sourced rate (80 MHz) at clock-init time so enabling it does not
+ * try to bring PLL8 up. cci_0 already defaults to 19.2 MHz via TCXO.
+ */
+&camcc {
+	assigned-clocks = <&camcc CAM_CC_SLOW_AHB_CLK_SRC>;
+	assigned-clock-rates = <80000000>;
+};
