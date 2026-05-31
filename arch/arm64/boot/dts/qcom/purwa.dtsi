@@ -256,3 +256,13 @@
 &tsens3 {
 	status = "disabled";
 };
+
+/*
+ * Purwa CAMSS is a cut-down version of Hamoa's: 2 x CSIPHY (0, 4), 1 x VFE,
+ * 2 x VFE-lite, no VFE1. Switch the compatible so the driver applies the
+ * Purwa resource map; the extra reg/clock entries inherited from hamoa are
+ * harmless (driver looks them up by name from its smaller table).
+ */
+&camss {
+	compatible = "qcom,x1p42100-camss";
+};
