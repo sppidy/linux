@@ -8,7 +8,6 @@
 #include <dt-bindings/input/gpio-keys.h>
 #include <dt-bindings/input/input.h>
 #include <dt-bindings/leds/common.h>
-#include <dt-bindings/phy/phy.h>
 #include <dt-bindings/pinctrl/qcom,pmic-gpio.h>
 #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
 
@@ -815,6 +814,20 @@
 			regulator-max-microvolt = <1800000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 		};
+
+		vreg_l4m_1p8: ldo4 {
+			regulator-name = "vreg_l4m_1p8";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l7m_2p9: ldo7 {
+			regulator-name = "vreg_l7m_2p9";
+			regulator-min-microvolt = <2912000>;
+			regulator-max-microvolt = <2912000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
 	};
 };
 
@@ -824,14 +837,19 @@
 	ports {
 		/*
 		 * port0 => csiphy0
-		 * port1 => csiphy1
-		 * port2 => csiphy2
-		 * port3 => csiphy4
+		 * port1 => csiphy4
 		 */
-		port@3 {
-			csiphy4_ep: endpoint@4 {
-				reg = <4>;
-				clock-lanes = <7>;
+		port@0 {
+			camss_csiphy0_inep: endpoint@0 {
+				reg = <0>;
+				data-lanes = <0>;
+				remote-endpoint = <&hm1092_ep>;
+			};
+		};
+
+		port@1 {
+			camss_csiphy4_inep: endpoint@0 {
+				reg = <0>;
 				data-lanes = <0 1>;
 				remote-endpoint = <&ov02c10_ep>;
 			};
@@ -869,18 +887,102 @@
 			ov02c10_ep: endpoint {
 				data-lanes = <1 2>;
 				link-frequencies = /bits/ 64 <400000000>;
-				remote-endpoint = <&csiphy4_ep>;
+				remote-endpoint = <&camss_csiphy4_inep>;
 			};
 		};
 	};
 };
 
 &csiphy4 {
-	vdda-0p8-supply = <&vreg_l2c_0p8>;
+	vdda-0p9-supply = <&vreg_l2c_0p8>;
 	vdda-1p2-supply = <&vreg_l1c_1p2>;
-	phy-type = <PHY_TYPE_DPHY>;
 
 	status = "okay";
+
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		/* Sensor input: D-PHY lane routing for the OV02C10 */
+		port@0 {
+			reg = <0>;
+			endpoint {
+				data-lanes = <0 1>;
+				remote-endpoint = <&ov02c10_ep>;
+			};
+		};
+	};
+};
+
+&cci0 {
+	status = "okay";
+};
+
+&cci0_i2c0 {
+	/* Himax HM1092 mono NIR sensor (Windows-Hello IR camera) on CSIPHY0 */
+	camera@24 {
+		compatible = "himax,hm1092";
+		reg = <0x24>;
+
+		reset-gpios = <&tlmm 109 GPIO_ACTIVE_LOW>;
+		pinctrl-0 = <&cam_ir_default>;
+		pinctrl-names = "default";
+
+		clocks = <&camcc CAM_CC_MCLK0_CLK>;
+		assigned-clocks = <&camcc CAM_CC_MCLK0_CLK>;
+		assigned-clock-rates = <24000000>;
+
+		orientation = <0>;
+
+		/* PM8550 IR illuminator, pulsed by the driver while streaming */
+		leds = <&ir_flash>;
+
+		avdd-supply = <&vreg_l7m_2p9>;
+		dvdd-supply = <&vreg_l7m_2p9>;
+		dovdd-supply = <&vreg_l4m_1p8>;
+
+		port {
+			hm1092_ep: endpoint {
+				data-lanes = <1>;
+				link-frequencies = /bits/ 64 <400000000>;
+				remote-endpoint = <&camss_csiphy0_inep>;
+			};
+		};
+	};
+};
+
+&csiphy0 {
+	vdda-0p9-supply = <&vreg_l2c_0p8>;
+	vdda-1p2-supply = <&vreg_l1c_1p2>;
+
+	status = "okay";
+
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		/* Sensor input: D-PHY lane routing for the HM1092 */
+		port@0 {
+			reg = <0>;
+			endpoint {
+				data-lanes = <0>;
+				remote-endpoint = <&hm1092_ep>;
+			};
+		};
+	};
+};
+
+&pm8550_flash {
+	status = "okay";
+
+	ir_flash: led-0 {
+		function = LED_FUNCTION_FLASH;
+		color = <LED_COLOR_ID_IR>;
+		led-sources = <4>;
+		led-max-microamp = <180000>;
+		flash-max-microamp = <700000>;
+		flash-max-timeout-us = <1280000>;
+	};
 };
 
 &i2c0 {
@@ -1378,6 +1480,22 @@
 
 		reset-n-pins {
 			pins = "gpio237";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-disable;
+		};
+	};
+
+	cam_ir_default: cam-ir-default-state {
+		mclk-pins {
+			pins = "gpio96";
+			function = "cam_mclk";
+			drive-strength = <16>;
+			bias-disable;
+		};
+
+		reset-n-pins {
+			pins = "gpio109";
 			function = "gpio";
 			drive-strength = <2>;
 			bias-disable;
