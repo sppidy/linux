@@ -109,6 +109,21 @@
 			"qcom/x1p42100/ASUSTeK/zenbook-a14/adsp_dtbs.elf";
 
 	status = "okay";
+
+	/*
+	 * Expose a SECURE ADSP FastRPC node (/dev/fastrpc-adsp-secure).
+	 * hamoa.dtsi marks this fastrpc domain qcom,non-secure-domain, so the
+	 * ADSP only registers the plain /dev/fastrpc-adsp. The SSC sensor
+	 * registry init (camera ALS / presence) needs the secure node: over it
+	 * the sensor PD has the TZ/crypto context to regenerate + validate its
+	 * secure DB; over the plain node it asserts at sns_registry_sensor.c:279.
+	 * Deleting the property flips the ADSP to a secure-only node.
+	 */
+	glink-edge {
+		fastrpc {
+			/delete-property/ qcom,non-secure-domain;
+		};
+	};
 };
 
 &remoteproc_cdsp {
