@@ -4319,14 +4319,6 @@ struct media_pad *camss_find_sensor_pad(struct media_entity *entity)
 
 	while (1) {
 		pad = &entity->pads[0];
-
-		/*
-		 * Work around unresolved bug in camss (or v4l2) which can
-		 * result in pad being NULL here.
-		 */
-		if (WARN_ON(!pad))
-			return NULL;
-
 		if (!(pad->flags & MEDIA_PAD_FL_SINK))
 			return NULL;
 
@@ -4588,7 +4580,6 @@ static int camss_init_subdevices(struct camss *camss)
 {
 	struct platform_device *pdev = to_platform_device(camss->dev);
 	const struct camss_resources *res = camss->res;
-	struct device_node *phy_np;
 	unsigned int i;
 	int ret;
 

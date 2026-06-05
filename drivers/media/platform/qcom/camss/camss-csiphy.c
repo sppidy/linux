@@ -303,63 +303,6 @@ static int csiphy_stream_on_legacy(struct csiphy_device *csiphy)
 }
 
 /*
- * eam_off - Disable streaming on CSIPHY module
- * @csiphy: CSIPHY device
- *
- * Helper function to disable streaming on CSIPHY module
- */
-static void csiphy_stream_off_legacy(struct csiphy_device *csiphy)
-{
-	csiphy->res->hw_ops->lanes_disable(csiphy, &csiphy->cfg);
-}
-
-/*
- * csiphy_stream_on - Enable streaming on CSIPHY module
- * @csiphy: CSIPHY device
- *
- * Helper function to enable streaming on CSIPHY module.
- * Main configuration of CSIPHY module is also done here.
- *
- * Return 0 on success or a negative error code otherwise
- */
-static int csiphy_stream_on(struct csiphy_device *csiphy)
-{
-	u8 bpp = csiphy_get_bpp(csiphy->res->formats->formats, csiphy->res->formats->nformats,
-				csiphy->fmt[MSM_CSIPHY_PAD_SINK].code);
-	u8 num_lanes = csiphy->cfg.csi2->lane_cfg.num_data;
-	struct phy_configure_opts_mipi_dphy *dphy_cfg;
-	union phy_configure_opts dphy_opts = { 0 };
-	struct device *dev = csiphy->camss->dev;
-	s64 link_freq;
-	int ret;
-
-	dphy_cfg = &dphy_opts.mipi_dphy;
-
-	link_freq = camss_get_link_freq(&csiphy->subdev.entity, bpp, num_lanes);
-
-	if (link_freq < 0) {
-		dev_err(dev,
-			"Cannot get CSI2 transmitter's link frequency\n");
-		return -EINVAL;
-	}
-
-	phy_mipi_dphy_get_default_config_for_hsclk(link_freq, num_lanes, dphy_cfg);
-
-	phy_set_mode(csiphy->phy, PHY_MODE_MIPI_DPHY);
-
-	ret = phy_configure(csiphy->phy, &dphy_opts);
-	if (ret) {
-		dev_err(dev, "failed to configure MIPI D-PHY\n");
-		goto error;
-	}
-
-	return phy_power_on(csiphy->phy);
-
-error:
-	return ret;
-}
-
-/*
  * csiphy_stream_off - Disable streaming on CSIPHY module
  * @csiphy: CSIPHY device
  *
@@ -367,7 +310,7 @@ error:
  */
 static void csiphy_stream_off_legacy(struct csiphy_device *csiphy)
 {
-	phy_power_off(csiphy->phy);
+	csiphy->res->hw_ops->lanes_disable(csiphy, &csiphy->cfg);
 }
 
 /*
