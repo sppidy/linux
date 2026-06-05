@@ -151,3 +151,14 @@
 		max-speed = <3000000>;
 	};
 };
+
+/*
+ * The iris video codec's VPU is TME-locked to the secure owner on this part,
+ * so no firmware (TZ PAS or no-TZ) authenticates for the HLOS - probing it only
+ * wastes time and, on the no-TZ path, hard-resets the SoC. hamoa.dtsi already
+ * leaves it disabled; pin it disabled at the board level too so a stray iris
+ * driver (e.g. mainline's, built-in) can never bind here.
+ */
+&iris {
+	status = "disabled";
+};

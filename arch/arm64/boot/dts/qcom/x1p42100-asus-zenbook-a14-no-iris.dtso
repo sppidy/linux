@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * ASUS Zenbook A14 (x1p42100): the iris video codec's VPU is TME-locked to the
+ * secure owner on this machine, so no firmware authenticates for the HLOS. The
+ * shared EL2 overlay (x1-el2.dtso) turns iris on with the generic no-TZ VPU
+ * firmware, which works on other x1 boards but hard-resets the SoC here.
+ *
+ * This overlay is applied after x1-el2.dtbo for the A14 EL2 dtbs only, pinning
+ * iris back off so neither our no-TZ port nor a stock iris driver can probe it.
+ * The x1e80100 A14 variant keeps the shared behaviour and is unaffected.
+ */
+
+/dts-v1/;
+/plugin/;
+
+&iris {
+	status = "disabled";
+};
