@@ -849,10 +849,21 @@ static int qcom_pas_probe(struct platform_device *pdev)
 
 	rproc->has_iommu = of_property_present(pdev->dev.of_node, "iommus");
 	if (desc->auto_boot) {
-		if (ops->start)
+		if (ops->start) {
 			rproc->auto_boot = RPROC_AUTO_BOOT_RESTART_IF_FW_AVAILABLE;
-		else
+		} else {
 			rproc->auto_boot = RPROC_AUTO_BOOT_ATTACH_OR_START;
+			/*
+			 * Attach-only remoteproc: the DSP was booted by the
+			 * pre-Linux EL2/boot chain and we only attach to it, so
+			 * there is no start op. If it crashes, recovery must
+			 * re-attach (RPROC_FEAT_ATTACH_ON_RECOVERY) instead of
+			 * falling through to rproc_start(), which would deref the
+			 * NULL ->start op and oops. The re-attach fails gracefully
+			 * if the DSP did not come back (it stays offline).
+			 */
+			rproc_set_feature(rproc, RPROC_FEAT_ATTACH_ON_RECOVERY);
+		}
 	} else {
 		rproc->auto_boot = RPROC_AUTO_BOOT_DISABLED;
 	}
