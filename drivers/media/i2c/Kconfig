@@ -141,12 +141,9 @@ config VIDEO_HM1092
 	tristate "Himax HM1092 sensor support"
 	select V4L2_CCI_I2C
 	help
-	  This is a Video4Linux2 sensor driver for the Himax
-	  HM1092 1MP mono IR camera used for face authentication
-	  on Snapdragon X laptops (ASUS Zenbook A14 etc.).
-
-	  Register tables were reverse-engineered from the Qualcomm
-	  Chromatix sensor module shipped in the Windows BSP.
+	  This is a Video4Linux2 sensor driver for the Himax HM1092
+	  monochrome near-infrared CMOS image sensor, used as the
+	  face-authentication IR camera on laptops.
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called hm1092.
