@@ -36,10 +36,6 @@
  * The driver uses the Linux GPIO and interrupt framework to expose a virtual
  * GPIO for each outbound entry and a virtual interrupt controller for each
  * inbound entry.
- *
- * V2 of SMP2P allows remote processors to write to outbound smp2p items before
- * the full smp2p connection is negotiated. This is important for processors
- * started before linux runs.
  */
 
 #define SMP2P_MAX_ENTRY 16
@@ -250,39 +246,6 @@ static int qcom_smp2p_in_version(struct qcom_smp2p *smp2p)
 		return 0;
 
 	return in->version;
-}
-
-static void qcom_smp2p_start_in(struct qcom_smp2p *smp2p)
-{
-	unsigned int smem_id = smp2p->smem_items[SMP2P_INBOUND];
-	unsigned int pid = smp2p->remote_pid;
-	char buf[SMP2P_MAX_ENTRY_NAME];
-	struct smp2p_smem_item *in;
-	struct smp2p_entry *entry;
-	size_t size;
-	int i;
-
-	in = qcom_smem_get(pid, smem_id, &size);
-	if (IS_ERR(in))
-		return;
-
-	smp2p->in = in;
-
-	/* Check if version is initialized by the remote. */
-	if (in->version == 0)
-		return;
-
-	for (i = smp2p->valid_entries; i < in->valid_entries; i++) {
-		list_for_each_entry(entry, &smp2p->inbound, node) {
-			memcpy(buf, in->entries[i].name, sizeof(buf));
-			if (!strcmp(buf, entry->name)) {
-				entry->value = &in->entries[i].value;
-				entry->last_value = readl(entry->value);
-				break;
-			}
-		}
-	}
-	smp2p->valid_entries = i;
 }
 
 static void qcom_smp2p_notify_in(struct qcom_smp2p *smp2p)
@@ -752,9 +715,6 @@ static int qcom_smp2p_probe(struct platform_device *pdev)
 			list_add(&entry->node, &smp2p->outbound);
 		}
 	}
-
-	/* Check inbound entries in the case of early boot processor */
-	qcom_smp2p_start_in(smp2p);
 
 	if (smp2p->in)
 		/* Ignore return status since we kick unconditionally below */
