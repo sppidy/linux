@@ -1738,6 +1738,22 @@ static int rproc_stop(struct rproc *rproc, bool crashed)
 	return 0;
 }
 
+static void rproc_release_resources(struct rproc *rproc)
+{
+	/* clean up all acquired resources */
+	rproc_resource_cleanup(rproc);
+
+	/* release HW resources if needed */
+	rproc_unprepare_device(rproc);
+
+	rproc_disable_iommu(rproc);
+
+	/* Free the copy of the resource table */
+	kfree(rproc->cached_table);
+	rproc->cached_table = NULL;
+	rproc->table_ptr = NULL;
+}
+
 /*
  * __rproc_detach(): Does the opposite of __rproc_attach()
  */
@@ -1785,6 +1801,37 @@ static int rproc_attach_recovery(struct rproc *rproc)
 		return ret;
 
 	return __rproc_attach(rproc);
+}
+
+/*
+ * rproc_stop_recovery() - clean up after a crash of a non-restartable remoteproc
+ *
+ * Some remoteprocs can be attached to while they are already running, but
+ * cannot be restarted from Linux. Once such a remoteproc crashes there is no
+ * way to restart it, but we must still stop cleanly: tearing down the
+ * subdevices (e.g. glink) releases any callers that would otherwise keep
+ * retrying against the dead remote processor forever.
+ */
+static int rproc_stop_recovery(struct rproc *rproc)
+{
+	int ret;
+
+	ret = rproc_stop(rproc, true);
+	if (ret)
+		return ret;
+
+	/* generate coredump */
+	rproc->ops->coredump(rproc);
+
+	/* This processor cannot be booted again, so release it completely. */
+	rproc_release_resources(rproc);
+	atomic_set(&rproc->power, 0);
+
+	dev_info(&rproc->dev,
+		 "stopped remote processor %s; cannot restart\n",
+		 rproc->name);
+
+	return 0;
 }
 
 static int rproc_boot_recovery(struct rproc *rproc)
@@ -1844,6 +1891,8 @@ int rproc_trigger_recovery(struct rproc *rproc)
 
 	if (rproc_has_feature(rproc, RPROC_FEAT_ATTACH_ON_RECOVERY))
 		ret = rproc_attach_recovery(rproc);
+	else if (rproc->ops->stop && !rproc->ops->start)
+		ret = rproc_stop_recovery(rproc);
 	else
 		ret = rproc_boot_recovery(rproc);
 
@@ -1926,6 +1975,12 @@ int rproc_boot(struct rproc *rproc)
 	if (rproc->state == RPROC_DELETED) {
 		ret = -ENODEV;
 		dev_err(dev, "can't boot deleted rproc %s\n", rproc->name);
+		goto unlock_mutex;
+	}
+
+	if (rproc->state == RPROC_OFFLINE && !rproc->ops->start) {
+		ret = -EOPNOTSUPP;
+		dev_err(dev, "can't restart rproc %s\n", rproc->name);
 		goto unlock_mutex;
 	}
 
@@ -2025,18 +2080,7 @@ int rproc_shutdown(struct rproc *rproc)
 		goto out;
 	}
 
-	/* clean up all acquired resources */
-	rproc_resource_cleanup(rproc);
-
-	/* release HW resources if needed */
-	rproc_unprepare_device(rproc);
-
-	rproc_disable_iommu(rproc);
-
-	/* Free the copy of the resource table */
-	kfree(rproc->cached_table);
-	rproc->cached_table = NULL;
-	rproc->table_ptr = NULL;
+	rproc_release_resources(rproc);
 out:
 	mutex_unlock(&rproc->lock);
 	return ret;
@@ -2091,18 +2135,7 @@ int rproc_detach(struct rproc *rproc)
 		goto out;
 	}
 
-	/* clean up all acquired resources */
-	rproc_resource_cleanup(rproc);
-
-	/* release HW resources if needed */
-	rproc_unprepare_device(rproc);
-
-	rproc_disable_iommu(rproc);
-
-	/* Free the copy of the resource table */
-	kfree(rproc->cached_table);
-	rproc->cached_table = NULL;
-	rproc->table_ptr = NULL;
+	rproc_release_resources(rproc);
 out:
 	mutex_unlock(&rproc->lock);
 	return ret;
