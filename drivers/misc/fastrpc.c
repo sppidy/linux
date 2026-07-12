@@ -305,6 +305,7 @@ struct fastrpc_user {
 
 	int client_id;
 	int pd;
+	bool dsp_process_init;
 	bool is_secure_dev;
 	/* Lock for lists */
 	spinlock_t lock;
@@ -1627,7 +1628,8 @@ static int fastrpc_device_release(struct inode *inode, struct file *file)
 	struct fastrpc_channel_ctx *cctx = fl->cctx;
 	unsigned long flags;
 
-	fastrpc_release_current_dsp_process(fl);
+	if (fl->dsp_process_init)
+		fastrpc_release_current_dsp_process(fl);
 
 	spin_lock_irqsave(&cctx->lock, flags);
 	list_del(&fl->user);
@@ -2173,15 +2175,23 @@ static long fastrpc_device_ioctl(struct file *file, unsigned int cmd,
 		break;
 	case FASTRPC_IOCTL_INIT_ATTACH:
 		err = fastrpc_init_attach(fl, ROOT_PD);
+		if (!err)
+			fl->dsp_process_init = true;
 		break;
 	case FASTRPC_IOCTL_INIT_ATTACH_SNS:
 		err = fastrpc_init_attach(fl, SENSORS_PD);
+		if (!err)
+			fl->dsp_process_init = true;
 		break;
 	case FASTRPC_IOCTL_INIT_CREATE_STATIC:
 		err = fastrpc_init_create_static_process(fl, argp);
+		if (!err)
+			fl->dsp_process_init = true;
 		break;
 	case FASTRPC_IOCTL_INIT_CREATE:
 		err = fastrpc_init_create_process(fl, argp);
+		if (!err)
+			fl->dsp_process_init = true;
 		break;
 	case FASTRPC_IOCTL_ALLOC_DMA_BUFF:
 		err = fastrpc_dmabuf_alloc(fl, argp);
