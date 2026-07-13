@@ -184,6 +184,17 @@ static bool qcom_nspm_any_vote_user_locked(struct qcom_nspm *nspm)
 	return false;
 }
 
+static bool qcom_nspm_generation_valid_locked(struct qcom_nspm *nspm,
+					      u32 generation)
+{
+	if (generation == nspm->generation)
+		return true;
+
+	nspm->counters.stale_events++;
+
+	return false;
+}
+
 static void qcom_nspm_log_event_locked(struct qcom_nspm *nspm,
 				       struct qcom_nspm_bank *bank,
 				       enum qcom_nspm_state from,
@@ -638,7 +649,7 @@ unsigned int qcom_nspm_session_start_index(struct qcom_nspm *nspm,
 EXPORT_SYMBOL_GPL(qcom_nspm_session_start_index);
 
 int qcom_nspm_session_reserve(struct qcom_nspm *nspm, u32 sid,
-			      u32 client_id, pid_t tgid)
+			      u32 client_id, pid_t tgid, u32 *generation)
 {
 	struct qcom_nspm_bank *bank;
 	enum qcom_nspm_state from;
@@ -702,6 +713,8 @@ int qcom_nspm_session_reserve(struct qcom_nspm *nspm, u32 sid,
 	bank_index = bank - nspm->banks;
 	nspm->next_bank = (bank_index + 1) % QCOM_NSPM_BANK_COUNT;
 	nspm->counters.reservations++;
+	if (generation)
+		*generation = nspm->generation;
 	trace_nspm_reservation(nspm->generation, sid, client_id, tgid, 0);
 	mutex_unlock(&nspm->lock);
 
@@ -716,7 +729,8 @@ out_failure:
 }
 EXPORT_SYMBOL_GPL(qcom_nspm_session_reserve);
 
-void qcom_nspm_session_rollback(struct qcom_nspm *nspm, u32 client_id)
+void qcom_nspm_session_rollback(struct qcom_nspm *nspm, u32 generation,
+				u32 client_id)
 {
 	struct qcom_nspm_bank *bank;
 
@@ -724,16 +738,20 @@ void qcom_nspm_session_rollback(struct qcom_nspm *nspm, u32 client_id)
 		return;
 
 	mutex_lock(&nspm->lock);
+	if (!qcom_nspm_generation_valid_locked(nspm, generation))
+		goto out_unlock;
 	bank = qcom_nspm_find_client_locked(nspm, client_id);
 	if (bank)
 		qcom_nspm_transition_locked(nspm, bank,
 					    QCOM_NSPM_RESERVATION_ROLLBACK,
 					    false);
+out_unlock:
 	mutex_unlock(&nspm->lock);
 }
 EXPORT_SYMBOL_GPL(qcom_nspm_session_rollback);
 
-void qcom_nspm_create_start(struct qcom_nspm *nspm, u32 client_id)
+void qcom_nspm_create_start(struct qcom_nspm *nspm, u32 generation,
+			    u32 client_id)
 {
 	struct qcom_nspm_bank *bank;
 
@@ -741,16 +759,19 @@ void qcom_nspm_create_start(struct qcom_nspm *nspm, u32 client_id)
 		return;
 
 	mutex_lock(&nspm->lock);
+	if (!qcom_nspm_generation_valid_locked(nspm, generation))
+		goto out_unlock;
 	bank = qcom_nspm_find_client_locked(nspm, client_id);
 	if (bank)
 		qcom_nspm_transition_locked(nspm, bank,
 					    QCOM_NSPM_CREATE_START, false);
+out_unlock:
 	mutex_unlock(&nspm->lock);
 }
 EXPORT_SYMBOL_GPL(qcom_nspm_create_start);
 
-void qcom_nspm_create_done(struct qcom_nspm *nspm, u32 client_id,
-			   int create_ret, bool sent_to_dsp)
+void qcom_nspm_create_done(struct qcom_nspm *nspm, u32 generation,
+			   u32 client_id, int create_ret, bool sent_to_dsp)
 {
 	struct qcom_nspm_bank *bank;
 	enum qcom_nspm_event event;
@@ -759,6 +780,8 @@ void qcom_nspm_create_done(struct qcom_nspm *nspm, u32 client_id,
 		return;
 
 	mutex_lock(&nspm->lock);
+	if (!qcom_nspm_generation_valid_locked(nspm, generation))
+		goto out_unlock;
 	bank = qcom_nspm_find_client_locked(nspm, client_id);
 	if (!bank)
 		goto out_unlock;
@@ -784,8 +807,8 @@ out_unlock:
 }
 EXPORT_SYMBOL_GPL(qcom_nspm_create_done);
 
-void qcom_nspm_release_start(struct qcom_nspm *nspm, u32 client_id,
-			    u32 pending, u32 mappings)
+void qcom_nspm_release_start(struct qcom_nspm *nspm, u32 generation,
+			    u32 client_id, u32 pending, u32 mappings)
 {
 	struct qcom_nspm_bank *bank;
 
@@ -793,6 +816,8 @@ void qcom_nspm_release_start(struct qcom_nspm *nspm, u32 client_id,
 		return;
 
 	mutex_lock(&nspm->lock);
+	if (!qcom_nspm_generation_valid_locked(nspm, generation))
+		goto out_unlock;
 	bank = qcom_nspm_find_client_locked(nspm, client_id);
 	if (bank) {
 		bank->pending = pending;
@@ -801,12 +826,13 @@ void qcom_nspm_release_start(struct qcom_nspm *nspm, u32 client_id,
 					    QCOM_NSPM_RELEASE_START, false);
 		qcom_nspm_schedule_timeout_locked(nspm);
 	}
+out_unlock:
 	mutex_unlock(&nspm->lock);
 }
 EXPORT_SYMBOL_GPL(qcom_nspm_release_start);
 
-void qcom_nspm_release_done(struct qcom_nspm *nspm, u32 client_id,
-			   int release_ret)
+void qcom_nspm_release_done(struct qcom_nspm *nspm, u32 generation,
+			   u32 client_id, int release_ret)
 {
 	struct qcom_nspm_bank *bank;
 
@@ -814,6 +840,8 @@ void qcom_nspm_release_done(struct qcom_nspm *nspm, u32 client_id,
 		return;
 
 	mutex_lock(&nspm->lock);
+	if (!qcom_nspm_generation_valid_locked(nspm, generation))
+		goto out_unlock;
 	bank = qcom_nspm_find_client_locked(nspm, client_id);
 	if (!bank)
 		goto out_unlock;
@@ -833,8 +861,9 @@ out_unlock:
 }
 EXPORT_SYMBOL_GPL(qcom_nspm_release_done);
 
-void qcom_nspm_session_close(struct qcom_nspm *nspm, u32 client_id,
-			    bool dsp_process_init, u32 pending, u32 mappings)
+void qcom_nspm_session_close(struct qcom_nspm *nspm, u32 generation,
+			    u32 client_id, bool dsp_process_init, u32 pending,
+			    u32 mappings)
 {
 	struct qcom_nspm_bank *bank;
 
@@ -842,6 +871,8 @@ void qcom_nspm_session_close(struct qcom_nspm *nspm, u32 client_id,
 		return;
 
 	mutex_lock(&nspm->lock);
+	if (!qcom_nspm_generation_valid_locked(nspm, generation))
+		goto out_unlock;
 	bank = qcom_nspm_find_client_locked(nspm, client_id);
 	if (!bank)
 		goto out_unlock;
