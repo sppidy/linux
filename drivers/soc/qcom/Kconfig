@@ -301,8 +301,9 @@ config QCOM_NSPM
 	help
 	  Build the experimental Qualcomm X1P neural signal processor
 	  session-lifecycle manager. The manager observes FastRPC process
-	  creation and teardown and holds documented power and interconnect
-	  votes. It does not program undocumented MCDM or ATCU registers.
+	  creation and teardown and, in enforcement mode, holds documented
+	  power and interconnect votes. It does not program undocumented MCDM
+	  or ATCU registers.
 
 config QCOM_NSPM_KUNIT_TEST
 	tristate "KUnit tests for Qualcomm NSP manager" if !KUNIT_ALL_TESTS

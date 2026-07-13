@@ -165,6 +165,12 @@ static void qcom_nspm_state_metadata_test(struct kunit *test)
 	KUNIT_EXPECT_FALSE(test, qcom_nspm_state_holds_vote(QCOM_NSPM_DEAD));
 }
 
+static void qcom_nspm_vote_policy_test(struct kunit *test)
+{
+	KUNIT_EXPECT_FALSE(test, qcom_nspm_mode_owns_votes(false));
+	KUNIT_EXPECT_TRUE(test, qcom_nspm_mode_owns_votes(true));
+}
+
 static void qcom_nspm_iommu_sid_test(struct kunit *test)
 {
 	struct of_phandle_args iommu = {
@@ -189,6 +195,7 @@ static struct kunit_case qcom_nspm_test_cases[] = {
 	KUNIT_CASE(qcom_nspm_generation_order_test),
 	KUNIT_CASE(qcom_nspm_notification_order_test),
 	KUNIT_CASE(qcom_nspm_state_metadata_test),
+	KUNIT_CASE(qcom_nspm_vote_policy_test),
 	KUNIT_CASE(qcom_nspm_iommu_sid_test),
 	{ }
 };

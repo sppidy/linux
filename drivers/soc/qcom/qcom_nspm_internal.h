@@ -133,6 +133,11 @@ static inline int qcom_nspm_apply_event(enum qcom_nspm_state *state,
 	return 0;
 }
 
+static inline bool qcom_nspm_mode_owns_votes(bool enforcement)
+{
+	return enforcement;
+}
+
 static inline bool qcom_nspm_state_holds_vote(enum qcom_nspm_state state)
 {
 	return state != QCOM_NSPM_FREE && state != QCOM_NSPM_DEAD;

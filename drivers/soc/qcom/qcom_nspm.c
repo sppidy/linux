@@ -706,9 +706,11 @@ int qcom_nspm_session_reserve(struct qcom_nspm *nspm,
 		goto out_failure;
 	}
 
-	ret = qcom_nspm_acquire_votes_locked(nspm);
-	if (ret && nspm->enforcement)
-		goto out_failure;
+	if (qcom_nspm_mode_owns_votes(nspm->enforcement)) {
+		ret = qcom_nspm_acquire_votes_locked(nspm);
+		if (ret)
+			goto out_failure;
+	}
 
 	from = bank->state;
 	bank->client_id = client_id;
