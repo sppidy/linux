@@ -648,18 +648,43 @@ unsigned int qcom_nspm_session_start_index(struct qcom_nspm *nspm,
 }
 EXPORT_SYMBOL_GPL(qcom_nspm_session_start_index);
 
-int qcom_nspm_session_reserve(struct qcom_nspm *nspm, u32 sid,
+static int qcom_nspm_session_device_sid(struct device *dev, u32 *sid)
+{
+	struct of_phandle_args iommu;
+	int ret;
+
+	if (!dev || !dev->of_node)
+		return -EINVAL;
+
+	ret = of_parse_phandle_with_args(dev->of_node, "iommus",
+					 "#iommu-cells", 0, &iommu);
+	if (ret)
+		return ret;
+
+	ret = qcom_nspm_iommu_sid(&iommu, sid);
+	of_node_put(iommu.np);
+
+	return ret;
+}
+
+int qcom_nspm_session_reserve(struct qcom_nspm *nspm,
+			      struct device *session_dev,
 			      u32 client_id, pid_t tgid, u32 *generation)
 {
 	struct qcom_nspm_bank *bank;
 	enum qcom_nspm_state from;
 	int bank_index;
+	u32 sid;
 	int ret;
 
 	if (!nspm)
 		return 0;
 
+	ret = qcom_nspm_session_device_sid(session_dev, &sid);
+
 	mutex_lock(&nspm->lock);
+	if (ret)
+		goto out_failure;
 	bank = qcom_nspm_find_sid_locked(nspm, sid);
 	if (!bank) {
 		ret = -EINVAL;

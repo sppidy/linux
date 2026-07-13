@@ -3,7 +3,19 @@
 #define __QCOM_NSPM_INTERNAL_H__
 
 #include <linux/errno.h>
+#include <linux/of.h>
 #include <linux/types.h>
+
+static inline int qcom_nspm_iommu_sid(const struct of_phandle_args *iommu,
+				      u32 *sid)
+{
+	if (!iommu || !sid || !iommu->args_count)
+		return -EINVAL;
+
+	*sid = iommu->args[0];
+
+	return 0;
+}
 
 enum qcom_nspm_state {
 	QCOM_NSPM_FREE,

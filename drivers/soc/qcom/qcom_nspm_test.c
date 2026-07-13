@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
 #include <kunit/test.h>
+#include <linux/of.h>
 
 #include "qcom_nspm_internal.h"
 
@@ -164,6 +165,23 @@ static void qcom_nspm_state_metadata_test(struct kunit *test)
 	KUNIT_EXPECT_FALSE(test, qcom_nspm_state_holds_vote(QCOM_NSPM_DEAD));
 }
 
+static void qcom_nspm_iommu_sid_test(struct kunit *test)
+{
+	struct of_phandle_args iommu = {
+		.args_count = 2,
+		.args = { 0x0c0c, 0x20 },
+	};
+	u32 sid = 0;
+	int ret;
+
+	ret = qcom_nspm_iommu_sid(&iommu, &sid);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+	KUNIT_EXPECT_EQ(test, sid, 0x0c0c);
+
+	iommu.args_count = 0;
+	KUNIT_EXPECT_EQ(test, qcom_nspm_iommu_sid(&iommu, &sid), -EINVAL);
+}
+
 static struct kunit_case qcom_nspm_test_cases[] = {
 	KUNIT_CASE(qcom_nspm_valid_transitions_test),
 	KUNIT_CASE(qcom_nspm_exception_transitions_test),
@@ -171,6 +189,7 @@ static struct kunit_case qcom_nspm_test_cases[] = {
 	KUNIT_CASE(qcom_nspm_generation_order_test),
 	KUNIT_CASE(qcom_nspm_notification_order_test),
 	KUNIT_CASE(qcom_nspm_state_metadata_test),
+	KUNIT_CASE(qcom_nspm_iommu_sid_test),
 	{ }
 };
 

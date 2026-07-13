@@ -1657,7 +1657,7 @@ static struct fastrpc_session_ctx *fastrpc_session_alloc(
 		if (!session)
 			continue;
 
-		ret = qcom_nspm_session_reserve(cctx->nspm, session->sid,
+		ret = qcom_nspm_session_reserve(cctx->nspm, session->dev,
 						fl->client_id, fl->tgid,
 						&fl->nspm_generation);
 		if (!ret)

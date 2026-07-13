@@ -21,7 +21,7 @@ struct qcom_nspm *qcom_nspm_fastrpc_register(struct device *dev);
 void qcom_nspm_fastrpc_unregister(struct qcom_nspm *nspm);
 unsigned int qcom_nspm_session_start_index(struct qcom_nspm *nspm,
 					   unsigned int count);
-int qcom_nspm_session_reserve(struct qcom_nspm *nspm, u32 sid,
+int qcom_nspm_session_reserve(struct qcom_nspm *nspm, struct device *session_dev,
 			      u32 client_id, pid_t tgid, u32 *generation);
 void qcom_nspm_session_rollback(struct qcom_nspm *nspm, u32 generation,
 				u32 client_id);
@@ -58,7 +58,8 @@ qcom_nspm_session_start_index(struct qcom_nspm *nspm, unsigned int count)
 	return 0;
 }
 
-static inline int qcom_nspm_session_reserve(struct qcom_nspm *nspm, u32 sid,
+static inline int qcom_nspm_session_reserve(struct qcom_nspm *nspm,
+					    struct device *session_dev,
 					    u32 client_id, pid_t tgid,
 					    u32 *generation)
 {
