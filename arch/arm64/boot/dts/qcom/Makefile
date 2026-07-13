@@ -404,6 +404,7 @@ dtb-$(CONFIG_ARCH_QCOM)	+= talos-evk-lvds-auo,g133han01.dtb
 
 dtb-$(CONFIG_ARCH_QCOM)	+= x1-el2.dtbo
 DTC_FLAGS_x1-el2 := -Wno-avoid_default_addr_size
+dtb-$(CONFIG_ARCH_QCOM)	+= x1p42100-nspm.dtbo
 
 x126100-lenovo-ideapad-slim3-el2-dtbs := x126100-lenovo-ideapad-slim3.dtb x1-el2.dtbo
 dtb-$(CONFIG_ARCH_QCOM)	+= x126100-lenovo-ideapad-slim3.dtb x126100-lenovo-ideapad-slim3-el2.dtb
@@ -451,6 +452,8 @@ x1p42100-asus-vivobook-s15-el2-dtbs	:= x1p42100-asus-vivobook-s15.dtb x1-el2.dtb
 dtb-$(CONFIG_ARCH_QCOM)	+= x1p42100-asus-vivobook-s15.dtb x1p42100-asus-vivobook-s15-el2.dtb
 x1p42100-asus-zenbook-a14-el2-dtbs	:= x1p42100-asus-zenbook-a14.dtb x1-el2.dtbo
 dtb-$(CONFIG_ARCH_QCOM)	+= x1p42100-asus-zenbook-a14.dtb x1p42100-asus-zenbook-a14-el2.dtb
+x1p42100-asus-zenbook-a14-el2-nspm-dtbs := x1p42100-asus-zenbook-a14.dtb x1-el2.dtbo x1p42100-nspm.dtbo
+dtb-$(CONFIG_ARCH_QCOM)	+= x1p42100-asus-zenbook-a14-el2-nspm.dtb
 x1p42100-asus-zenbook-a14-lcd-el2-dtbs	:= x1p42100-asus-zenbook-a14-lcd.dtb x1-el2.dtbo
 dtb-$(CONFIG_ARCH_QCOM)	+= x1p42100-asus-zenbook-a14-lcd.dtb x1p42100-asus-zenbook-a14-lcd-el2.dtb
 x1p42100-crd-el2-dtbs	:= x1p42100-crd.dtb x1-el2.dtbo
