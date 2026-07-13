@@ -28,6 +28,8 @@ enum qcom_nspm_event {
 	QCOM_NSPM_RELEASE_FAIL,
 	QCOM_NSPM_TERMINAL,
 	QCOM_NSPM_TIMEOUT,
+	QCOM_NSPM_FIFO_OVERFLOW,
+	QCOM_NSPM_AMBIGUOUS_NOTIFICATION,
 	QCOM_NSPM_CHANNEL_LOST,
 	QCOM_NSPM_CHANNEL_ONLINE,
 };
@@ -42,6 +44,14 @@ static inline int qcom_nspm_next_state(enum qcom_nspm_state state,
 
 	if (event == QCOM_NSPM_CHANNEL_ONLINE && state == QCOM_NSPM_DEAD)
 		return QCOM_NSPM_FREE;
+
+	if (event == QCOM_NSPM_FIFO_OVERFLOW && state != QCOM_NSPM_FREE &&
+	    state != QCOM_NSPM_DEAD)
+		return QCOM_NSPM_QUARANTINED;
+
+	if (event == QCOM_NSPM_AMBIGUOUS_NOTIFICATION &&
+	    state != QCOM_NSPM_FREE && state != QCOM_NSPM_DEAD)
+		return QCOM_NSPM_QUARANTINED;
 
 	if (event == QCOM_NSPM_CREATE_AMBIGUOUS_FAIL &&
 	    state == QCOM_NSPM_STARTING)
@@ -90,6 +100,54 @@ static inline int qcom_nspm_next_state(enum qcom_nspm_state state,
 	}
 
 	return -EPROTO;
+}
+
+static inline int qcom_nspm_apply_event(enum qcom_nspm_state *state,
+					u32 generation, u32 event_generation,
+					enum qcom_nspm_event event,
+					bool terminal_proven)
+{
+	int next;
+
+	if (generation != event_generation)
+		return -ESTALE;
+
+	next = qcom_nspm_next_state(*state, event, terminal_proven);
+	if (next < 0)
+		return next;
+
+	*state = next;
+
+	return 0;
+}
+
+static inline bool qcom_nspm_state_holds_vote(enum qcom_nspm_state state)
+{
+	return state != QCOM_NSPM_FREE && state != QCOM_NSPM_DEAD;
+}
+
+static inline const char *qcom_nspm_state_name(enum qcom_nspm_state state)
+{
+	switch (state) {
+	case QCOM_NSPM_FREE:
+		return "free";
+	case QCOM_NSPM_RESERVED:
+		return "reserved";
+	case QCOM_NSPM_STARTING:
+		return "starting";
+	case QCOM_NSPM_ACTIVE:
+		return "active";
+	case QCOM_NSPM_RELEASING:
+		return "releasing";
+	case QCOM_NSPM_QUIESCING:
+		return "quiescing";
+	case QCOM_NSPM_QUARANTINED:
+		return "quarantined";
+	case QCOM_NSPM_DEAD:
+		return "dead";
+	}
+
+	return "unknown";
 }
 
 #endif

@@ -295,6 +295,15 @@ config QCOM_PBS
 	  This module provides the APIs to the client drivers that wants to send the
 	  PBS trigger event to the PBS RAM.
 
+config QCOM_NSPM
+	bool "Qualcomm X1P NSP manager"
+	depends on ARCH_QCOM && OF && PM && INTERCONNECT
+	help
+	  Build the experimental Qualcomm X1P neural signal processor
+	  session-lifecycle manager. The manager observes FastRPC process
+	  creation and teardown and holds documented power and interconnect
+	  votes. It does not program undocumented MCDM or ATCU registers.
+
 config QCOM_NSPM_KUNIT_TEST
 	tristate "KUnit tests for Qualcomm NSP manager" if !KUNIT_ALL_TESTS
 	depends on KUNIT
