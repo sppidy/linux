@@ -4005,6 +4005,15 @@ L:	linux-hwmon@vger.kernel.org
 S:	Maintained
 F:	drivers/hwmon/asus-ec-sensors.c
 
+ASUS ZENBOOK A14 EC DRIVERS
+M:	Sombre-Osmoze <sombre@osmoze.xyz>
+L:	linux-hwmon@vger.kernel.org
+L:	platform-driver-x86@vger.kernel.org
+S:	Maintained
+F:	Documentation/devicetree/bindings/embedded-controller/asus,zenbook-a14-ec.yaml
+F:	drivers/hid/hid-asus-ec.c
+F:	drivers/platform/arm64/asus-zenbook-a14-ec.c
+
 ASUS NOTEBOOKS AND EEEPC ACPI/WMI EXTRAS DRIVERS
 M:	Corentin Chary <corentin.chary@gmail.com>
 M:	Luke D. Jones <luke@ljones.dev>

@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/embedded-controller/asus,zenbook-a14-ec.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: ASUS Zenbook A14 Embedded Controller
+
+maintainers:
+  - Sombre-Osmoze <sombre@osmoze.xyz>
+
+description:
+  The ASUS Zenbook A14 carries an embedded controller at I2C address 0x5b.
+  It provides fan tachometers, per-fan PWM control, an EC temperature sensor,
+  and firmware-backed performance profiles.
+
+properties:
+  compatible:
+    const: asus,zenbook-a14-ec
+
+  reg:
+    const: 0x5b
+
+required:
+  - compatible
+  - reg
+
+additionalProperties: false
+
+examples:
+  - |
+    i2c {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        embedded-controller@5b {
+            compatible = "asus,zenbook-a14-ec";
+            reg = <0x5b>;
+        };
+    };
