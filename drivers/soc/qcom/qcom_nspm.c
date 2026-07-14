@@ -158,7 +158,8 @@ qcom_nspm_find_client_locked(struct qcom_nspm *nspm, u32 client_id)
 }
 
 static struct qcom_nspm_bank *
-qcom_nspm_find_tgid_locked(struct qcom_nspm *nspm, pid_t tgid)
+qcom_nspm_find_notification_client_locked(struct qcom_nspm *nspm,
+					  s32 client_id)
 {
 	int i;
 
@@ -166,7 +167,7 @@ qcom_nspm_find_tgid_locked(struct qcom_nspm *nspm, pid_t tgid)
 		if (nspm->banks[i].state == QCOM_NSPM_FREE ||
 		    nspm->banks[i].state == QCOM_NSPM_DEAD)
 			continue;
-		if (nspm->banks[i].tgid == tgid)
+		if (qcom_nspm_notification_matches_client(nspm->banks[i].client_id, client_id))
 			return &nspm->banks[i];
 	}
 
@@ -354,17 +355,20 @@ static void qcom_nspm_process_notification_locked(
 
 	notification = &event->notification;
 	nspm->counters.notifications++;
-	bank = qcom_nspm_find_tgid_locked(nspm, notification->pid);
-	trace_nspm_notification(event->generation, notification->pid,
-				 notification->type, notification->status, !!bank);
+	bank = qcom_nspm_find_notification_client_locked(nspm,
+							 notification->client_id);
+	trace_nspm_notification(event->generation, notification->client_id,
+				notification->type, notification->status, !!bank);
 	if (!bank) {
 		nspm->counters.notification_misses++;
 		return;
 	}
 
 	bank->last_notification = *notification;
-	terminal = nspm->terminal_status_valid &&
-		   notification->status == (u32)nspm->terminal_status;
+	terminal = qcom_nspm_notification_is_terminal(notification->type,
+						      notification->status,
+						      nspm->terminal_status_valid,
+						      nspm->terminal_status);
 	if (!terminal)
 		return;
 
@@ -514,14 +518,14 @@ static int qcom_nspm_state_show(struct seq_file *seq, void *unused)
 		struct qcom_nspm_bank *bank = &snapshot->banks[i];
 
 		seq_printf(seq,
-			   "  %02d sid=%#06x client=%u tgid=%d state=%s age_ms=%lld create=%d release=%d pending=%u mappings=%u notif={type=%u pid=%d status=%u}\n",
+			   "  %02d sid=%#06x client=%u tgid=%d state=%s age_ms=%lld create=%d release=%d pending=%u mappings=%u notif={type=%u client=%d status=%u}\n",
 			   i, bank->sid, bank->client_id, bank->tgid,
 			   qcom_nspm_state_name(bank->state),
 			   ktime_ms_delta(ktime_get_boottime(),
 					  bank->transition_time),
 			   bank->create_ret, bank->release_ret, bank->pending,
 			   bank->mappings, bank->last_notification.type,
-			   bank->last_notification.pid,
+			   bank->last_notification.client_id,
 			   bank->last_notification.status);
 	}
 
