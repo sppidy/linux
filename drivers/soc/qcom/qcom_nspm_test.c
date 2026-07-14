@@ -224,8 +224,45 @@ static void qcom_nspm_reservation_policy_test(struct kunit *test)
 			   qcom_nspm_state_can_reserve(QCOM_NSPM_QUIESCING));
 	KUNIT_EXPECT_FALSE(test,
 			   qcom_nspm_state_can_reserve(QCOM_NSPM_QUARANTINED));
+	KUNIT_EXPECT_TRUE(test,
+			  qcom_nspm_channel_accepts_reservation(true, true, false));
+	KUNIT_EXPECT_FALSE(test,
+			   qcom_nspm_channel_accepts_reservation(false, true, false));
+	KUNIT_EXPECT_FALSE(test,
+			   qcom_nspm_channel_accepts_reservation(true, false, false));
+	/* This gate has no mode argument: degraded always rejects reservations. */
+	KUNIT_EXPECT_FALSE(test,
+			   qcom_nspm_channel_accepts_reservation(true, true, true));
 	KUNIT_EXPECT_EQ(test, qcom_nspm_next_start_index(14, 12), 2U);
 	KUNIT_EXPECT_EQ(test, qcom_nspm_next_start_index(3, 0), 0U);
+}
+
+static void qcom_nspm_integrity_error_test(struct kunit *test)
+{
+	bool degrades;
+
+	degrades = qcom_nspm_create_error_degrades(QCOM_NSPM_AEE_EQURTMEMMAPCREATE, true);
+	KUNIT_EXPECT_TRUE(test,
+			  degrades);
+	degrades = qcom_nspm_create_error_degrades(QCOM_NSPM_AEE_EQURTINVHANDLE, true);
+	KUNIT_EXPECT_TRUE(test,
+			  degrades);
+	degrades = qcom_nspm_create_error_degrades(QCOM_NSPM_AEE_EQURTBADASID, true);
+	KUNIT_EXPECT_TRUE(test,
+			  degrades);
+	degrades = qcom_nspm_create_error_degrades(QCOM_NSPM_AEE_EQURTMEMMAPCREATE, false);
+	KUNIT_EXPECT_FALSE(test,
+			   degrades);
+	degrades = qcom_nspm_create_error_degrades(QCOM_NSPM_AEE_EQURTINVHANDLE, false);
+	KUNIT_EXPECT_FALSE(test,
+			   degrades);
+	degrades = qcom_nspm_create_error_degrades(QCOM_NSPM_AEE_EQURTBADASID, false);
+	KUNIT_EXPECT_FALSE(test,
+			   degrades);
+	KUNIT_EXPECT_FALSE(test,
+			   qcom_nspm_create_error_degrades(0, true));
+	KUNIT_EXPECT_FALSE(test,
+			   qcom_nspm_create_error_degrades(-EIO, true));
 }
 
 static void qcom_nspm_notification_lifetime_test(struct kunit *test)
@@ -289,6 +326,7 @@ static struct kunit_case qcom_nspm_test_cases[] = {
 	KUNIT_CASE(qcom_nspm_terminal_notification_test),
 	KUNIT_CASE(qcom_nspm_terminal_latch_test),
 	KUNIT_CASE(qcom_nspm_reservation_policy_test),
+	KUNIT_CASE(qcom_nspm_integrity_error_test),
 	KUNIT_CASE(qcom_nspm_notification_lifetime_test),
 	KUNIT_CASE(qcom_nspm_release_completion_test),
 	KUNIT_CASE(qcom_nspm_iommu_sid_test),

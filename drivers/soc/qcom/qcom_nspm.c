@@ -27,7 +27,6 @@
 #define QCOM_NSPM_FIFO_DEPTH		64
 #define QCOM_NSPM_EVENT_DEPTH		64
 #define QCOM_NSPM_RELEASE_TIMEOUT_MS	10000
-#define QCOM_NSPM_BAD_ASID		((s32)0x8000054f)
 
 struct qcom_nspm_fifo_event {
 	struct qcom_nspm_notification notification;
@@ -70,7 +69,7 @@ struct qcom_nspm_counters {
 	u64 notification_misses;
 	u64 timeouts;
 	u64 quarantines;
-	u64 bad_asid;
+	u64 integrity_errors;
 	u64 fifo_overflows;
 	u64 stale_events;
 	u64 invalid_transitions;
@@ -493,7 +492,7 @@ static int qcom_nspm_state_show(struct seq_file *seq, void *unused)
 	seq_puts(seq, "terminal_statuses: user-pd 1..3\n");
 
 	seq_printf(seq,
-		   "counters: reserve=%llu reserve_fail=%llu create=%llu release=%llu notification=%llu miss=%llu timeout=%llu quarantine=%llu bad_asid=%llu overflow=%llu stale=%llu invalid=%llu\n",
+		   "counters: reserve=%llu reserve_fail=%llu create=%llu release=%llu notification=%llu miss=%llu timeout=%llu quarantine=%llu integrity_error=%llu overflow=%llu stale=%llu invalid=%llu\n",
 		   snapshot->counters.reservations,
 		   snapshot->counters.reservation_failures,
 		   snapshot->counters.creates, snapshot->counters.releases,
@@ -501,7 +500,7 @@ static int qcom_nspm_state_show(struct seq_file *seq, void *unused)
 		   snapshot->counters.notification_misses,
 		   snapshot->counters.timeouts,
 		   snapshot->counters.quarantines,
-		   snapshot->counters.bad_asid,
+		   snapshot->counters.integrity_errors,
 		   snapshot->counters.fifo_overflows,
 		   snapshot->counters.stale_events,
 		   snapshot->counters.invalid_transitions);
@@ -670,7 +669,7 @@ int qcom_nspm_session_reserve(struct qcom_nspm *nspm,
 {
 	struct qcom_nspm_bank *bank;
 	int bank_index;
-	u32 sid;
+	u32 sid = 0;
 	int ret;
 
 	if (!nspm)
@@ -681,19 +680,16 @@ int qcom_nspm_session_reserve(struct qcom_nspm *nspm,
 	mutex_lock(&nspm->lock);
 	if (ret)
 		goto out_failure;
-	bank = qcom_nspm_find_sid_locked(nspm, sid);
-	if (!bank) {
-		ret = -EINVAL;
-		goto out_failure;
-	}
-
-	if (!nspm->online || !nspm->accepting) {
+	if (!qcom_nspm_channel_accepts_reservation(nspm->online,
+						   nspm->accepting,
+						   nspm->degraded)) {
 		ret = -EPIPE;
 		goto out_failure;
 	}
 
-	if (nspm->enforcement && nspm->degraded) {
-		ret = -EOVERFLOW;
+	bank = qcom_nspm_find_sid_locked(nspm, sid);
+	if (!bank) {
+		ret = -EINVAL;
 		goto out_failure;
 	}
 
@@ -807,8 +803,12 @@ void qcom_nspm_create_done(struct qcom_nspm *nspm, u32 generation,
 		event = QCOM_NSPM_CREATE_AMBIGUOUS_FAIL;
 
 	qcom_nspm_transition_locked(nspm, bank, event, false);
-	if (create_ret == QCOM_NSPM_BAD_ASID) {
-		nspm->counters.bad_asid++;
+	if (qcom_nspm_create_error_degrades(create_ret, sent_to_dsp)) {
+		nspm->degraded = true;
+		nspm->accepting = false;
+		nspm->counters.integrity_errors++;
+	}
+	if (create_ret == QCOM_NSPM_AEE_EQURTBADASID) {
 		trace_nspm_bad_asid(nspm->generation, bank->sid,
 				     bank->client_id, create_ret);
 	}
