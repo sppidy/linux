@@ -40,6 +40,7 @@ struct qcom_nspm_bank {
 	u32 client_id;
 	pid_t tgid;
 	enum qcom_nspm_state state;
+	ktime_t reservation_time;
 	ktime_t transition_time;
 	int create_ret;
 	int release_ret;
@@ -104,8 +105,6 @@ struct qcom_nspm {
 	u32 next_bank;
 	u32 event_head;
 	u32 event_count;
-	s32 terminal_status;
-	bool terminal_status_valid;
 	bool enforcement;
 	bool online;
 	bool accepting;
@@ -121,8 +120,6 @@ struct qcom_nspm_snapshot {
 	u32 generation;
 	u32 event_head;
 	u32 event_count;
-	s32 terminal_status;
-	bool terminal_status_valid;
 	bool enforcement;
 	bool online;
 	bool accepting;
@@ -363,23 +360,25 @@ static void qcom_nspm_process_notification_locked(
 		nspm->counters.notification_misses++;
 		return;
 	}
-
-	bank->last_notification = *notification;
-	terminal = qcom_nspm_notification_is_terminal(notification->type,
-						      notification->status,
-						      nspm->terminal_status_valid,
-						      nspm->terminal_status);
-	if (!terminal)
-		return;
-
-	if (bank->state == QCOM_NSPM_RELEASING) {
-		bank->terminal_seen = true;
+	if (!qcom_nspm_notification_is_current(event->timestamp, bank->reservation_time)) {
+		nspm->counters.stale_events++;
 		return;
 	}
 
-	if (bank->state == QCOM_NSPM_QUIESCING) {
+	bank->last_notification = *notification;
+	terminal = qcom_nspm_notification_is_terminal(notification->type,
+						      notification->status);
+	if (!terminal)
+		return;
+
+	if (qcom_nspm_state_can_latch_terminal(bank->state)) {
 		bank->terminal_seen = true;
-		if (!bank->pending && !bank->mappings)
+		if (bank->state != QCOM_NSPM_QUIESCING)
+			return;
+		if (qcom_nspm_release_is_complete(bank->state,
+						  bank->terminal_seen,
+						  bank->pending,
+						  bank->mappings))
 			qcom_nspm_transition_locked(nspm, bank,
 						    QCOM_NSPM_TERMINAL, true);
 		return;
@@ -478,8 +477,6 @@ static int qcom_nspm_state_show(struct seq_file *seq, void *unused)
 	snapshot->generation = nspm->generation;
 	snapshot->event_head = nspm->event_head;
 	snapshot->event_count = nspm->event_count;
-	snapshot->terminal_status = nspm->terminal_status;
-	snapshot->terminal_status_valid = nspm->terminal_status_valid;
 	snapshot->enforcement = nspm->enforcement;
 	snapshot->online = nspm->online;
 	snapshot->accepting = nspm->accepting;
@@ -493,11 +490,7 @@ static int qcom_nspm_state_show(struct seq_file *seq, void *unused)
 	seq_printf(seq, "online: %u\naccepting: %u\nvoted: %u\ndegraded: %u\n",
 		   snapshot->online, snapshot->accepting, snapshot->voted,
 		   snapshot->degraded);
-	if (snapshot->terminal_status_valid)
-		seq_printf(seq, "terminal_status: %d\n",
-			   snapshot->terminal_status);
-	else
-		seq_puts(seq, "terminal_status: unproven\n");
+	seq_puts(seq, "terminal_statuses: user-pd 1..3\n");
 
 	seq_printf(seq,
 		   "counters: reserve=%llu reserve_fail=%llu create=%llu release=%llu notification=%llu miss=%llu timeout=%llu quarantine=%llu bad_asid=%llu overflow=%llu stale=%llu invalid=%llu\n",
@@ -518,13 +511,14 @@ static int qcom_nspm_state_show(struct seq_file *seq, void *unused)
 		struct qcom_nspm_bank *bank = &snapshot->banks[i];
 
 		seq_printf(seq,
-			   "  %02d sid=%#06x client=%u tgid=%d state=%s age_ms=%lld create=%d release=%d pending=%u mappings=%u notif={type=%u client=%d status=%u}\n",
+				   "  %02d sid=%#06x client=%u tgid=%d state=%s age_ms=%lld create=%d release=%d terminal=%u pending=%u mappings=%u notif={type=%u client=%d status=%u}\n",
 			   i, bank->sid, bank->client_id, bank->tgid,
 			   qcom_nspm_state_name(bank->state),
 			   ktime_ms_delta(ktime_get_boottime(),
 					  bank->transition_time),
-			   bank->create_ret, bank->release_ret, bank->pending,
-			   bank->mappings, bank->last_notification.type,
+				   bank->create_ret, bank->release_ret,
+				   bank->terminal_seen, bank->pending, bank->mappings,
+				   bank->last_notification.type,
 			   bank->last_notification.client_id,
 			   bank->last_notification.status);
 	}
@@ -638,14 +632,13 @@ EXPORT_SYMBOL_GPL(qcom_nspm_fastrpc_unregister);
 unsigned int qcom_nspm_session_start_index(struct qcom_nspm *nspm,
 					   unsigned int count)
 {
-	unsigned int start = 0;
+	unsigned int start;
 
 	if (!nspm || !count)
 		return 0;
 
 	mutex_lock(&nspm->lock);
-	if (nspm->enforcement)
-		start = nspm->next_bank % count;
+	start = qcom_nspm_next_start_index(nspm->next_bank, count);
 	mutex_unlock(&nspm->lock);
 
 	return start;
@@ -676,7 +669,6 @@ int qcom_nspm_session_reserve(struct qcom_nspm *nspm,
 			      u32 client_id, pid_t tgid, u32 *generation)
 {
 	struct qcom_nspm_bank *bank;
-	enum qcom_nspm_state from;
 	int bank_index;
 	u32 sid;
 	int ret;
@@ -705,7 +697,7 @@ int qcom_nspm_session_reserve(struct qcom_nspm *nspm,
 		goto out_failure;
 	}
 
-	if (nspm->enforcement && bank->state != QCOM_NSPM_FREE) {
+	if (!qcom_nspm_state_can_reserve(bank->state)) {
 		ret = -EBUSY;
 		goto out_failure;
 	}
@@ -716,7 +708,6 @@ int qcom_nspm_session_reserve(struct qcom_nspm *nspm,
 			goto out_failure;
 	}
 
-	from = bank->state;
 	bank->client_id = client_id;
 	bank->tgid = tgid;
 	bank->create_ret = 0;
@@ -724,22 +715,11 @@ int qcom_nspm_session_reserve(struct qcom_nspm *nspm,
 	bank->pending = 0;
 	bank->mappings = 0;
 	bank->terminal_seen = false;
+	bank->reservation_time = ktime_get_boottime();
 	memset(&bank->last_notification, 0,
 	       sizeof(bank->last_notification));
 
-	if (from == QCOM_NSPM_FREE) {
-		qcom_nspm_transition_locked(nspm, bank, QCOM_NSPM_RESERVE,
-					    false);
-	} else {
-		nspm->counters.invalid_transitions++;
-		bank->state = QCOM_NSPM_RESERVED;
-		bank->transition_time = ktime_get_boottime();
-		qcom_nspm_log_event_locked(nspm, bank, from,
-					   QCOM_NSPM_RESERVE, -EALREADY);
-		trace_nspm_transition(nspm->generation, bank->sid,
-				       bank->client_id, from, bank->state,
-				       QCOM_NSPM_RESERVE, -EALREADY);
-	}
+	qcom_nspm_transition_locked(nspm, bank, QCOM_NSPM_RESERVE, false);
 
 	bank_index = bank - nspm->banks;
 	nspm->next_bank = (bank_index + 1) % QCOM_NSPM_BANK_COUNT;
@@ -882,8 +862,10 @@ void qcom_nspm_release_done(struct qcom_nspm *nspm, u32 generation,
 	qcom_nspm_transition_locked(nspm, bank,
 				    release_ret ? QCOM_NSPM_RELEASE_FAIL :
 				    QCOM_NSPM_RELEASE_OK, false);
-	if (!release_ret && bank->terminal_seen && !bank->pending &&
-	    !bank->mappings)
+	if (!release_ret &&
+	    qcom_nspm_release_is_complete(bank->state,
+					  bank->terminal_seen,
+					  bank->pending, bank->mappings))
 		qcom_nspm_transition_locked(nspm, bank, QCOM_NSPM_TERMINAL,
 					    true);
 
@@ -914,8 +896,10 @@ void qcom_nspm_session_close(struct qcom_nspm *nspm, u32 generation,
 		qcom_nspm_transition_locked(nspm, bank,
 					    QCOM_NSPM_RESERVATION_ROLLBACK,
 					    false);
-	} else if (dsp_process_init && bank->state == QCOM_NSPM_QUIESCING &&
-		   bank->terminal_seen && !pending && !mappings) {
+	} else if (dsp_process_init &&
+		   qcom_nspm_release_is_complete(bank->state,
+						 bank->terminal_seen,
+						 pending, mappings)) {
 		qcom_nspm_transition_locked(nspm, bank, QCOM_NSPM_TERMINAL,
 					    true);
 	} else if (bank->state == QCOM_NSPM_RELEASING ||
@@ -997,7 +981,6 @@ static int qcom_nspm_probe(struct platform_device *pdev)
 {
 	struct qcom_nspm *nspm;
 	struct device *dev = &pdev->dev;
-	u32 terminal_status;
 	u32 sids[QCOM_NSPM_BANK_COUNT];
 	int count;
 	int i;
@@ -1034,15 +1017,6 @@ static int qcom_nspm_probe(struct platform_device *pdev)
 	nspm->hw_ops = &qcom_nspm_generic_hw_ops;
 	nspm->enforcement = device_property_read_bool(
 		dev, "qcom,enforce-session-lifecycle");
-	ret = device_property_read_u32(dev, "qcom,terminal-status",
-				       &terminal_status);
-	if (!ret) {
-		nspm->terminal_status = (s32)terminal_status;
-		nspm->terminal_status_valid = true;
-	}
-	if (nspm->enforcement && !nspm->terminal_status_valid)
-		return dev_err_probe(dev, -EINVAL,
-				     "enforcement requires a proven terminal status\n");
 
 	mutex_init(&nspm->lock);
 	spin_lock_init(&nspm->fifo_lock);

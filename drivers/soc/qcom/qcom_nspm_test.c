@@ -181,18 +181,83 @@ static void qcom_nspm_notification_client_test(struct kunit *test)
 			   qcom_nspm_notification_matches_client(3, 0));
 	KUNIT_EXPECT_FALSE(test,
 			   qcom_nspm_notification_matches_client(3, -1));
+	/* A delayed notification from an older PD lifetime must not match. */
+	KUNIT_EXPECT_FALSE(test,
+			   qcom_nspm_notification_matches_client(24, 23));
 }
 
 static void qcom_nspm_terminal_notification_test(struct kunit *test)
 {
 	KUNIT_EXPECT_TRUE(test,
-			  qcom_nspm_notification_is_terminal(4, 4, true, 4));
+			  qcom_nspm_notification_is_terminal(4, 1));
+	KUNIT_EXPECT_TRUE(test,
+			  qcom_nspm_notification_is_terminal(4, 2));
+	KUNIT_EXPECT_TRUE(test,
+			  qcom_nspm_notification_is_terminal(4, 3));
 	KUNIT_EXPECT_FALSE(test,
-			   qcom_nspm_notification_is_terminal(3, 4, true, 4));
+			   qcom_nspm_notification_is_terminal(3, 1));
 	KUNIT_EXPECT_FALSE(test,
-			   qcom_nspm_notification_is_terminal(4, 3, true, 4));
+			   qcom_nspm_notification_is_terminal(4, 0));
 	KUNIT_EXPECT_FALSE(test,
-			   qcom_nspm_notification_is_terminal(4, 4, false, 4));
+			   qcom_nspm_notification_is_terminal(4, 4));
+}
+
+static void qcom_nspm_terminal_latch_test(struct kunit *test)
+{
+	KUNIT_EXPECT_TRUE(test,
+			  qcom_nspm_state_can_latch_terminal(QCOM_NSPM_ACTIVE));
+	KUNIT_EXPECT_TRUE(test,
+			  qcom_nspm_state_can_latch_terminal(QCOM_NSPM_RELEASING));
+	KUNIT_EXPECT_TRUE(test,
+			  qcom_nspm_state_can_latch_terminal(QCOM_NSPM_QUIESCING));
+	KUNIT_EXPECT_FALSE(test,
+			   qcom_nspm_state_can_latch_terminal(QCOM_NSPM_STARTING));
+	KUNIT_EXPECT_FALSE(test,
+			   qcom_nspm_state_can_latch_terminal(QCOM_NSPM_FREE));
+}
+
+static void qcom_nspm_reservation_policy_test(struct kunit *test)
+{
+	KUNIT_EXPECT_TRUE(test,
+			  qcom_nspm_state_can_reserve(QCOM_NSPM_FREE));
+	KUNIT_EXPECT_FALSE(test,
+			   qcom_nspm_state_can_reserve(QCOM_NSPM_QUIESCING));
+	KUNIT_EXPECT_FALSE(test,
+			   qcom_nspm_state_can_reserve(QCOM_NSPM_QUARANTINED));
+	KUNIT_EXPECT_EQ(test, qcom_nspm_next_start_index(14, 12), 2U);
+	KUNIT_EXPECT_EQ(test, qcom_nspm_next_start_index(3, 0), 0U);
+}
+
+static void qcom_nspm_notification_lifetime_test(struct kunit *test)
+{
+	KUNIT_EXPECT_FALSE(test,
+			   qcom_nspm_notification_is_current(ms_to_ktime(10),
+							     ms_to_ktime(20)));
+	KUNIT_EXPECT_TRUE(test,
+			  qcom_nspm_notification_is_current(ms_to_ktime(20),
+							    ms_to_ktime(20)));
+	KUNIT_EXPECT_TRUE(test,
+			  qcom_nspm_notification_is_current(ms_to_ktime(30),
+							    ms_to_ktime(20)));
+}
+
+static void qcom_nspm_release_completion_test(struct kunit *test)
+{
+	KUNIT_EXPECT_TRUE(test,
+			  qcom_nspm_release_is_complete(QCOM_NSPM_QUIESCING,
+							true, 0, 0));
+	KUNIT_EXPECT_FALSE(test,
+			   qcom_nspm_release_is_complete(QCOM_NSPM_QUIESCING,
+							 false, 0, 0));
+	KUNIT_EXPECT_FALSE(test,
+			   qcom_nspm_release_is_complete(QCOM_NSPM_QUIESCING,
+							 true, 1, 0));
+	KUNIT_EXPECT_FALSE(test,
+			   qcom_nspm_release_is_complete(QCOM_NSPM_QUIESCING,
+							 true, 0, 1));
+	KUNIT_EXPECT_FALSE(test,
+			   qcom_nspm_release_is_complete(QCOM_NSPM_RELEASING,
+							 true, 0, 0));
 }
 
 static void qcom_nspm_iommu_sid_test(struct kunit *test)
@@ -222,6 +287,10 @@ static struct kunit_case qcom_nspm_test_cases[] = {
 	KUNIT_CASE(qcom_nspm_vote_policy_test),
 	KUNIT_CASE(qcom_nspm_notification_client_test),
 	KUNIT_CASE(qcom_nspm_terminal_notification_test),
+	KUNIT_CASE(qcom_nspm_terminal_latch_test),
+	KUNIT_CASE(qcom_nspm_reservation_policy_test),
+	KUNIT_CASE(qcom_nspm_notification_lifetime_test),
+	KUNIT_CASE(qcom_nspm_release_completion_test),
 	KUNIT_CASE(qcom_nspm_iommu_sid_test),
 	{ }
 };
