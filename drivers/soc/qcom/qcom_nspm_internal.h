@@ -3,6 +3,7 @@
 #define __QCOM_NSPM_INTERNAL_H__
 
 #include <linux/errno.h>
+#include <linux/ktime.h>
 #include <linux/of.h>
 #include <linux/types.h>
 
@@ -47,6 +48,14 @@ enum qcom_nspm_event {
 };
 
 #define QCOM_NSPM_NOTIF_STATUS_RESPONSE	4
+
+enum qcom_nspm_pd_status {
+	QCOM_NSPM_USER_PD_UP,
+	QCOM_NSPM_USER_PD_EXIT,
+	QCOM_NSPM_USER_PD_FORCE_KILL,
+	QCOM_NSPM_USER_PD_EXCEPTION,
+	QCOM_NSPM_DSP_SSR,
+};
 
 static inline int qcom_nspm_next_state(enum qcom_nspm_state state,
 				       enum qcom_nspm_event event,
@@ -149,12 +158,44 @@ qcom_nspm_notification_matches_client(u32 client_id,
 }
 
 static inline bool
-qcom_nspm_notification_is_terminal(u32 type, u32 status,
-				   bool terminal_status_valid,
-				   s32 terminal_status)
+qcom_nspm_notification_is_terminal(u32 type, u32 status)
 {
 	return type == QCOM_NSPM_NOTIF_STATUS_RESPONSE &&
-	       terminal_status_valid && status == (u32)terminal_status;
+	       status >= QCOM_NSPM_USER_PD_EXIT &&
+	       status <= QCOM_NSPM_USER_PD_EXCEPTION;
+}
+
+static inline bool
+qcom_nspm_state_can_latch_terminal(enum qcom_nspm_state state)
+{
+	return state == QCOM_NSPM_ACTIVE ||
+	       state == QCOM_NSPM_RELEASING ||
+	       state == QCOM_NSPM_QUIESCING;
+}
+
+static inline bool qcom_nspm_state_can_reserve(enum qcom_nspm_state state)
+{
+	return state == QCOM_NSPM_FREE;
+}
+
+static inline unsigned int
+qcom_nspm_next_start_index(unsigned int next, unsigned int count)
+{
+	return count ? next % count : 0;
+}
+
+static inline bool qcom_nspm_notification_is_current(ktime_t queued,
+						     ktime_t reserved)
+{
+	return !ktime_before(queued, reserved);
+}
+
+static inline bool
+qcom_nspm_release_is_complete(enum qcom_nspm_state state,
+			      bool terminal_seen, u32 pending, u32 mappings)
+{
+	return state == QCOM_NSPM_QUIESCING && terminal_seen &&
+	       !pending && !mappings;
 }
 
 static inline bool qcom_nspm_state_holds_vote(enum qcom_nspm_state state)

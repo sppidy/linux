@@ -9,6 +9,7 @@
 #include <linux/dma-resv.h>
 #include <linux/idr.h>
 #include <linux/list.h>
+#include <linux/limits.h>
 #include <linux/miscdevice.h>
 #include <linux/module.h>
 #include <linux/of_address.h>
@@ -284,6 +285,7 @@ struct fastrpc_channel_ctx {
 	spinlock_t lock;
 	struct idr ctx_idr;
 	struct list_head users;
+	u32 next_client_id;
 	struct kref refcount;
 	/* Flag if dsp attributes are cached */
 	bool valid_attributes;
@@ -1623,22 +1625,34 @@ err:
 	return err;
 }
 
+/* Client IDs are PD-lifetime cookies; never wrap while the channel is live. */
+static int fastrpc_client_id_alloc_locked(struct fastrpc_channel_ctx *cctx)
+{
+	if (!cctx->next_client_id || cctx->next_client_id > INT_MAX)
+		return -ENOSPC;
+
+	return cctx->next_client_id++;
+}
+
 static struct fastrpc_session_ctx *fastrpc_session_alloc(
-					struct fastrpc_user *fl)
+						struct fastrpc_user *fl)
 {
 	struct fastrpc_channel_ctx *cctx = fl->cctx;
 	struct fastrpc_session_ctx *session = NULL;
 	unsigned long flags;
 	unsigned int count;
 	unsigned int start;
+	int client_id;
 	int ret;
 	int i;
 
 	spin_lock_irqsave(&cctx->lock, flags);
 	count = cctx->sesscount;
+	client_id = count ? fastrpc_client_id_alloc_locked(cctx) : -ENOSPC;
 	spin_unlock_irqrestore(&cctx->lock, flags);
-	if (!count)
+	if (client_id < 0)
 		return NULL;
+	fl->client_id = client_id;
 
 	start = qcom_nspm_session_start_index(cctx->nspm, count);
 	for (i = 0; i < count; i++) {
@@ -1649,8 +1663,6 @@ static struct fastrpc_session_ctx *fastrpc_session_alloc(
 		    cctx->session[index].valid) {
 			cctx->session[index].used = true;
 			session = &cctx->session[index];
-			/* any non-zero ID will work, session_idx + 1 is the simplest one */
-			fl->client_id = index + 1;
 		}
 		spin_unlock_irqrestore(&cctx->lock, flags);
 
@@ -2552,6 +2564,7 @@ static int fastrpc_rpmsg_probe(struct rpmsg_device *rpdev)
 	INIT_LIST_HEAD(&data->invoke_interrupted_mmaps);
 	spin_lock_init(&data->lock);
 	idr_init(&data->ctx_idr);
+	data->next_client_id = 1;
 	data->domain_id = domain_id;
 	data->rpdev = rpdev;
 	dev_set_drvdata(rdev, data);
