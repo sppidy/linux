@@ -125,6 +125,7 @@ static int asus_raw_event(struct hid_device *hdev, struct hid_report *report,
 					(A14_EC_MAX_BACKLIGHT + 1);
 			asus_kbd_set_brightness(&data->kbd_led_cdev,
 						(enum led_brightness)next_level);
+			led_classdev_notify_brightness_hw_changed(&data->kbd_led_cdev, next_level);
 			return 1;
 		}
 		case A14_EC_EVT_KEY_FN_F5:
@@ -302,6 +303,7 @@ static int asus_hid_probe(struct hid_device *hdev, const struct hid_device_id *i
 	data->kbd_led_cdev.name = "asus::kbd_backlight";
 	data->kbd_led_cdev.brightness_set = asus_kbd_set_brightness;
 	data->kbd_led_cdev.max_brightness = A14_EC_MAX_BACKLIGHT;
+	data->kbd_led_cdev.flags = LED_BRIGHT_HW_CHANGED;
 	ret = led_classdev_register(&hdev->dev, &data->kbd_led_cdev);
 	if (ret) {
 		input_unregister_device(data->hotkey_input_dev);
