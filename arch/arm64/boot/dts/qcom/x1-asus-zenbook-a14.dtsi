@@ -1101,7 +1101,10 @@
 		pinctrl-names = "default";
 	};
 
-	/* EC @0x5b */
+	embedded-controller@5b {
+		compatible = "asus,zenbook-a14-ec";
+		reg = <0x5b>;
+	};
 };
 
 &i2c7 {

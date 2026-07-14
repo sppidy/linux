@@ -126,4 +126,17 @@ config EC_LENOVO_YOGA_SLIM7X
 	  mute button, and reporting device suspend to the EC so it can take
 	  appropriate actions.
 
+config EC_ASUS_ZENBOOK_A14
+	tristate "ASUS Zenbook A14 Embedded Controller driver"
+	depends on ARCH_QCOM || COMPILE_TEST
+	depends on I2C
+	depends on HWMON
+	depends on ACPI_PLATFORM_PROFILE
+	help
+	  Driver for the embedded controller in the Snapdragon X based ASUS
+	  Zenbook A14. It provides fan tachometers, per-fan PWM controls, an EC
+	  temperature sensor, and firmware-backed platform profiles.
+
+	  Say M or Y here to include this support.
+
 endif # ARM64_PLATFORM_DEVICES
