@@ -912,6 +912,22 @@ out_unlock:
 }
 EXPORT_SYMBOL_GPL(qcom_nspm_session_close);
 
+void qcom_nspm_mapping_event(struct qcom_nspm *nspm, u32 generation, u32 sid,
+			     u32 client_id, pid_t tgid,
+			     enum qcom_nspm_mapping_op operation, u64 address,
+			     u64 size, int ret, bool sent_to_dsp)
+{
+	if (!nspm)
+		return;
+
+	mutex_lock(&nspm->lock);
+	if (generation == nspm->generation)
+		trace_nspm_mapping(generation, sid, client_id, tgid, operation,
+				   address, size, ret, sent_to_dsp);
+	mutex_unlock(&nspm->lock);
+}
+EXPORT_SYMBOL_GPL(qcom_nspm_mapping_event);
+
 bool qcom_nspm_queue_notification(
 		struct qcom_nspm *nspm,
 		const struct qcom_nspm_notification *notification)

@@ -15,6 +15,17 @@ struct qcom_nspm_notification {
 	u32 status;
 };
 
+enum qcom_nspm_mapping_op {
+	QCOM_NSPM_MAPPING_INIT_ALLOC,
+	QCOM_NSPM_MAPPING_CREATE_START,
+	QCOM_NSPM_MAPPING_CREATE_DONE,
+	QCOM_NSPM_MAPPING_MMAP,
+	QCOM_NSPM_MAPPING_MUNMAP,
+	QCOM_NSPM_MAPPING_RELEASE_START,
+	QCOM_NSPM_MAPPING_RELEASE_DONE,
+	QCOM_NSPM_MAPPING_FILE_CLOSE,
+};
+
 #if IS_ENABLED(CONFIG_QCOM_NSPM)
 
 struct qcom_nspm *qcom_nspm_fastrpc_register(struct device *dev);
@@ -36,6 +47,10 @@ void qcom_nspm_release_done(struct qcom_nspm *nspm, u32 generation,
 void qcom_nspm_session_close(struct qcom_nspm *nspm, u32 generation,
 			    u32 client_id, bool dsp_process_init, u32 pending,
 			    u32 mappings);
+void qcom_nspm_mapping_event(struct qcom_nspm *nspm, u32 generation, u32 sid,
+			     u32 client_id, pid_t tgid,
+			     enum qcom_nspm_mapping_op operation, u64 address,
+			     u64 size, int ret, bool sent_to_dsp);
 bool qcom_nspm_queue_notification(struct qcom_nspm *nspm,
 				  const struct qcom_nspm_notification *notif);
 void qcom_nspm_channel_lost(struct qcom_nspm *nspm);
@@ -100,6 +115,15 @@ static inline void qcom_nspm_session_close(struct qcom_nspm *nspm,
 					   u32 generation, u32 client_id,
 					   bool dsp_process_init,
 					   u32 pending, u32 mappings)
+{
+}
+
+static inline void qcom_nspm_mapping_event(struct qcom_nspm *nspm,
+					    u32 generation, u32 sid,
+					    u32 client_id, pid_t tgid,
+					    enum qcom_nspm_mapping_op operation,
+					    u64 address, u64 size, int ret,
+					    bool sent_to_dsp)
 {
 }
 

@@ -1464,8 +1464,15 @@ static int fastrpc_init_create_static_process(struct fastrpc_user *fl,
 
 	qcom_nspm_create_start(fl->cctx->nspm, fl->nspm_generation,
 			       fl->client_id);
+	qcom_nspm_mapping_event(fl->cctx->nspm, fl->nspm_generation,
+				fl->sctx->sid, fl->client_id, fl->tgid,
+				QCOM_NSPM_MAPPING_CREATE_START, 0, 0, 0, false);
 	err = fastrpc_internal_invoke_tracked(fl, true, FASTRPC_INIT_HANDLE,
 					      sc, args, &sent_to_dsp);
+	qcom_nspm_mapping_event(fl->cctx->nspm, fl->nspm_generation,
+				fl->sctx->sid, fl->client_id, fl->tgid,
+				QCOM_NSPM_MAPPING_CREATE_DONE, 0, 0, err,
+				sent_to_dsp);
 	qcom_nspm_create_done(fl->cctx->nspm, fl->nspm_generation,
 			      fl->client_id, err, sent_to_dsp);
 	if (err)
@@ -1570,6 +1577,10 @@ static int fastrpc_init_create_process(struct fastrpc_user *fl,
 		goto err_alloc;
 
 	fl->init_mem = imem;
+	qcom_nspm_mapping_event(fl->cctx->nspm, fl->nspm_generation,
+				fl->sctx->sid, fl->client_id, fl->tgid,
+				QCOM_NSPM_MAPPING_INIT_ALLOC, imem->dma_addr,
+				imem->size, 0, false);
 	args[0].ptr = (u64)(uintptr_t)&inbuf;
 	args[0].length = sizeof(inbuf);
 	args[0].fd = -1;
@@ -1603,8 +1614,15 @@ static int fastrpc_init_create_process(struct fastrpc_user *fl,
 
 	qcom_nspm_create_start(fl->cctx->nspm, fl->nspm_generation,
 			       fl->client_id);
+	qcom_nspm_mapping_event(fl->cctx->nspm, fl->nspm_generation,
+				fl->sctx->sid, fl->client_id, fl->tgid,
+				QCOM_NSPM_MAPPING_CREATE_START, 0, 0, 0, false);
 	err = fastrpc_internal_invoke_tracked(fl, true, FASTRPC_INIT_HANDLE,
 					      sc, args, &sent_to_dsp);
+	qcom_nspm_mapping_event(fl->cctx->nspm, fl->nspm_generation,
+				fl->sctx->sid, fl->client_id, fl->tgid,
+				QCOM_NSPM_MAPPING_CREATE_DONE, imem->dma_addr,
+				imem->size, err, sent_to_dsp);
 	qcom_nspm_create_done(fl->cctx->nspm, fl->nspm_generation,
 			      fl->client_id, err, sent_to_dsp);
 	if (err)
@@ -1716,6 +1734,7 @@ static int fastrpc_release_current_dsp_process(struct fastrpc_user *fl)
 	u32 pending;
 	int ret;
 	u32 sc;
+	bool sent_to_dsp;
 
 	client_id = fl->client_id;
 	args[0].ptr = (u64)(uintptr_t) &client_id;
@@ -1726,8 +1745,15 @@ static int fastrpc_release_current_dsp_process(struct fastrpc_user *fl)
 	fastrpc_user_counts(fl, &pending, &mappings);
 	qcom_nspm_release_start(fl->cctx->nspm, fl->nspm_generation,
 				fl->client_id, pending, mappings);
-	ret = fastrpc_internal_invoke(fl, true, FASTRPC_INIT_HANDLE,
-				      sc, &args[0]);
+	qcom_nspm_mapping_event(fl->cctx->nspm, fl->nspm_generation,
+				fl->sctx->sid, fl->client_id, fl->tgid,
+				QCOM_NSPM_MAPPING_RELEASE_START, 0, 0, 0, false);
+	ret = fastrpc_internal_invoke_tracked(fl, true, FASTRPC_INIT_HANDLE,
+					      sc, &args[0], &sent_to_dsp);
+	qcom_nspm_mapping_event(fl->cctx->nspm, fl->nspm_generation,
+				fl->sctx->sid, fl->client_id, fl->tgid,
+				QCOM_NSPM_MAPPING_RELEASE_DONE, 0, 0, ret,
+				sent_to_dsp);
 	qcom_nspm_release_done(fl->cctx->nspm, fl->nspm_generation,
 			       fl->client_id, ret);
 
@@ -1739,6 +1765,8 @@ static int fastrpc_device_release(struct inode *inode, struct file *file)
 	struct fastrpc_user *fl = (struct fastrpc_user *)file->private_data;
 	struct fastrpc_channel_ctx *cctx = fl->cctx;
 	unsigned long flags;
+	u32 mappings;
+	u32 pending;
 
 	if (fl->dsp_process_init)
 		fastrpc_release_current_dsp_process(fl);
@@ -1747,6 +1775,11 @@ static int fastrpc_device_release(struct inode *inode, struct file *file)
 	list_del(&fl->user);
 	spin_unlock_irqrestore(&cctx->lock, flags);
 
+	fastrpc_user_counts(fl, &pending, &mappings);
+	qcom_nspm_mapping_event(fl->cctx->nspm, fl->nspm_generation,
+				fl->sctx->sid, fl->client_id, fl->tgid,
+				QCOM_NSPM_MAPPING_FILE_CLOSE, pending, mappings, 0,
+				false);
 	file->private_data = NULL;
 	/* Release the reference taken in fastrpc_device_open */
 	fastrpc_user_put(fl);
@@ -1860,8 +1893,15 @@ static int fastrpc_init_attach(struct fastrpc_user *fl, int pd)
 
 	qcom_nspm_create_start(fl->cctx->nspm, fl->nspm_generation,
 			       fl->client_id);
+	qcom_nspm_mapping_event(fl->cctx->nspm, fl->nspm_generation,
+				fl->sctx->sid, fl->client_id, fl->tgid,
+				QCOM_NSPM_MAPPING_CREATE_START, 0, 0, 0, false);
 	ret = fastrpc_internal_invoke_tracked(fl, true, FASTRPC_INIT_HANDLE,
 					      sc, &args[0], &sent_to_dsp);
+	qcom_nspm_mapping_event(fl->cctx->nspm, fl->nspm_generation,
+				fl->sctx->sid, fl->client_id, fl->tgid,
+				QCOM_NSPM_MAPPING_CREATE_DONE, 0, 0, ret,
+				sent_to_dsp);
 	qcom_nspm_create_done(fl->cctx->nspm, fl->nspm_generation,
 			      fl->client_id, ret, sent_to_dsp);
 
@@ -1998,6 +2038,7 @@ static int fastrpc_req_munmap_impl(struct fastrpc_user *fl, struct fastrpc_buf *
 	struct device *dev = fl->sctx->dev;
 	int err;
 	u32 sc;
+	bool sent_to_dsp;
 
 	req_msg.client_id = fl->client_id;
 	req_msg.size = buf->size;
@@ -2007,8 +2048,12 @@ static int fastrpc_req_munmap_impl(struct fastrpc_user *fl, struct fastrpc_buf *
 	args[0].length = sizeof(req_msg);
 
 	sc = FASTRPC_SCALARS(FASTRPC_RMID_INIT_MUNMAP, 1, 0);
-	err = fastrpc_internal_invoke(fl, true, FASTRPC_INIT_HANDLE, sc,
-				      &args[0]);
+	err = fastrpc_internal_invoke_tracked(fl, true, FASTRPC_INIT_HANDLE, sc,
+					      &args[0], &sent_to_dsp);
+	qcom_nspm_mapping_event(fl->cctx->nspm, fl->nspm_generation,
+				fl->sctx->sid, fl->client_id, fl->tgid,
+				QCOM_NSPM_MAPPING_MUNMAP, buf->raddr, buf->size, err,
+				sent_to_dsp);
 	if (!err) {
 		dev_dbg(dev, "unmmap\tpt 0x%09lx OK\n", buf->raddr);
 		spin_lock(&fl->lock);
@@ -2060,6 +2105,7 @@ static int fastrpc_req_mmap(struct fastrpc_user *fl, char __user *argp)
 	struct device *dev = fl->sctx->dev;
 	int err;
 	u32 sc;
+	bool sent_to_dsp;
 
 	if (copy_from_user(&req, argp, sizeof(req)))
 		return -EFAULT;
@@ -2103,8 +2149,12 @@ static int fastrpc_req_mmap(struct fastrpc_user *fl, char __user *argp)
 	args[2].length = sizeof(rsp_msg);
 
 	sc = FASTRPC_SCALARS(FASTRPC_RMID_INIT_MMAP, 2, 1);
-	err = fastrpc_internal_invoke(fl, true, FASTRPC_INIT_HANDLE, sc,
-				      &args[0]);
+	err = fastrpc_internal_invoke_tracked(fl, true, FASTRPC_INIT_HANDLE, sc,
+					      &args[0], &sent_to_dsp);
+	qcom_nspm_mapping_event(fl->cctx->nspm, fl->nspm_generation,
+				fl->sctx->sid, fl->client_id, fl->tgid,
+				QCOM_NSPM_MAPPING_MMAP, buf->dma_addr, buf->size, err,
+				sent_to_dsp);
 	if (err) {
 		dev_err(dev, "mmap error (len 0x%08llx)\n", buf->size);
 		fastrpc_buf_free(buf);
@@ -2159,6 +2209,7 @@ static int fastrpc_req_mem_unmap_impl(struct fastrpc_user *fl, struct fastrpc_me
 	int err = 0;
 	u32 sc;
 	struct device *dev = fl->sctx->dev;
+	bool sent_to_dsp;
 
 	spin_lock(&fl->lock);
 	list_for_each_entry_safe(iter, m, &fl->maps, node) {
@@ -2184,8 +2235,12 @@ static int fastrpc_req_mem_unmap_impl(struct fastrpc_user *fl, struct fastrpc_me
 	args[0].length = sizeof(req_msg);
 
 	sc = FASTRPC_SCALARS(FASTRPC_RMID_INIT_MEM_UNMAP, 1, 0);
-	err = fastrpc_internal_invoke(fl, true, FASTRPC_INIT_HANDLE, sc,
-				      &args[0]);
+	err = fastrpc_internal_invoke_tracked(fl, true, FASTRPC_INIT_HANDLE, sc,
+					      &args[0], &sent_to_dsp);
+	qcom_nspm_mapping_event(fl->cctx->nspm, fl->nspm_generation,
+				fl->sctx->sid, fl->client_id, fl->tgid,
+				QCOM_NSPM_MAPPING_MUNMAP, map->raddr, map->len, err,
+				sent_to_dsp);
 	if (err) {
 		dev_err(dev, "unmmap\tpt fd = %d, 0x%09llx error\n",  map->fd, map->raddr);
 		return err;
@@ -2217,6 +2272,7 @@ static int fastrpc_req_mem_map(struct fastrpc_user *fl, char __user *argp)
 	struct fastrpc_map *map = NULL;
 	int err;
 	u32 sc;
+	bool sent_to_dsp;
 
 	if (copy_from_user(&req, argp, sizeof(req)))
 		return -EFAULT;
@@ -2253,7 +2309,12 @@ static int fastrpc_req_mem_map(struct fastrpc_user *fl, char __user *argp)
 	args[3].length = sizeof(rsp_msg);
 
 	sc = FASTRPC_SCALARS(FASTRPC_RMID_INIT_MEM_MAP, 3, 1);
-	err = fastrpc_internal_invoke(fl, true, FASTRPC_INIT_HANDLE, sc, &args[0]);
+	err = fastrpc_internal_invoke_tracked(fl, true, FASTRPC_INIT_HANDLE, sc,
+					      &args[0], &sent_to_dsp);
+	qcom_nspm_mapping_event(fl->cctx->nspm, fl->nspm_generation,
+				fl->sctx->sid, fl->client_id, fl->tgid,
+				QCOM_NSPM_MAPPING_MMAP, map->dma_addr, map->len, err,
+				sent_to_dsp);
 	if (err) {
 		dev_err(dev, "mem mmap error, fd %d, vaddr %llx, size %lld\n",
 			req.fd, req.vaddrin, map->len);

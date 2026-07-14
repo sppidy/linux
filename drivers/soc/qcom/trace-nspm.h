@@ -149,6 +149,39 @@ TRACE_EVENT(nspm_bad_asid,
 		  __entry->ret)
 );
 
+TRACE_EVENT(nspm_mapping,
+	TP_PROTO(u32 generation, u32 sid, u32 client_id, s32 tgid,
+		 u32 operation, u64 address, u64 size, int ret, bool sent_to_dsp),
+	TP_ARGS(generation, sid, client_id, tgid, operation, address, size, ret,
+		sent_to_dsp),
+	TP_STRUCT__entry(
+		__field(u32, generation)
+		__field(u32, sid)
+		__field(u32, client_id)
+		__field(s32, tgid)
+		__field(u32, operation)
+		__field(u64, address)
+		__field(u64, size)
+		__field(int, ret)
+		__field(bool, sent_to_dsp)
+	),
+	TP_fast_assign(
+		__entry->generation = generation;
+		__entry->sid = sid;
+		__entry->client_id = client_id;
+		__entry->tgid = tgid;
+		__entry->operation = operation;
+		__entry->address = address;
+		__entry->size = size;
+		__entry->ret = ret;
+		__entry->sent_to_dsp = sent_to_dsp;
+	),
+	TP_printk("generation=%u sid=%#x client=%u tgid=%d operation=%u address=%#llx size=%#llx ret=%d sent_to_dsp=%d",
+		  __entry->generation, __entry->sid, __entry->client_id,
+		  __entry->tgid, __entry->operation, __entry->address,
+		  __entry->size, __entry->ret, __entry->sent_to_dsp)
+);
+
 #endif
 
 #undef TRACE_INCLUDE_PATH
