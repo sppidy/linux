@@ -58,24 +58,25 @@ TRACE_EVENT(nspm_transition,
 );
 
 TRACE_EVENT(nspm_notification,
-	TP_PROTO(u32 generation, s32 pid, u32 type, u32 status, bool matched),
-	TP_ARGS(generation, pid, type, status, matched),
+	TP_PROTO(u32 generation, s32 client_id, u32 type, u32 status,
+		 bool matched),
+	TP_ARGS(generation, client_id, type, status, matched),
 	TP_STRUCT__entry(
 		__field(u32, generation)
-		__field(s32, pid)
+		__field(s32, client_id)
 		__field(u32, type)
 		__field(u32, status)
 		__field(bool, matched)
 	),
 	TP_fast_assign(
 		__entry->generation = generation;
-		__entry->pid = pid;
+		__entry->client_id = client_id;
 		__entry->type = type;
 		__entry->status = status;
 		__entry->matched = matched;
 	),
-	TP_printk("generation=%u pid=%d type=%u status=%u matched=%d",
-		  __entry->generation, __entry->pid, __entry->type,
+	TP_printk("generation=%u client=%d type=%u status=%u matched=%d",
+		  __entry->generation, __entry->client_id, __entry->type,
 		  __entry->status, __entry->matched)
 );
 

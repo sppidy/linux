@@ -11,7 +11,7 @@ struct qcom_nspm;
 struct qcom_nspm_notification {
 	u64 ctx;
 	u32 type;
-	s32 pid;
+	s32 client_id;
 	u32 status;
 };
 

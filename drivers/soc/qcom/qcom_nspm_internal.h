@@ -46,6 +46,8 @@ enum qcom_nspm_event {
 	QCOM_NSPM_CHANNEL_ONLINE,
 };
 
+#define QCOM_NSPM_NOTIF_STATUS_RESPONSE	4
+
 static inline int qcom_nspm_next_state(enum qcom_nspm_state state,
 				       enum qcom_nspm_event event,
 				       bool terminal_proven)
@@ -136,6 +138,23 @@ static inline int qcom_nspm_apply_event(enum qcom_nspm_state *state,
 static inline bool qcom_nspm_mode_owns_votes(bool enforcement)
 {
 	return enforcement;
+}
+
+static inline bool
+qcom_nspm_notification_matches_client(u32 client_id,
+				      s32 notification_client_id)
+{
+	return notification_client_id > 0 &&
+	       client_id == (u32)notification_client_id;
+}
+
+static inline bool
+qcom_nspm_notification_is_terminal(u32 type, u32 status,
+				   bool terminal_status_valid,
+				   s32 terminal_status)
+{
+	return type == QCOM_NSPM_NOTIF_STATUS_RESPONSE &&
+	       terminal_status_valid && status == (u32)terminal_status;
 }
 
 static inline bool qcom_nspm_state_holds_vote(enum qcom_nspm_state state)

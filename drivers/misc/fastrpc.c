@@ -186,7 +186,7 @@ struct fastrpc_invoke_rsp {
 struct fastrpc_dsp_notif_rsp {
 	u64 ctx;		/* reserved notification context */
 	u32 type;		/* notification type */
-	s32 pid;		/* user process TGID */
+	s32 client_id;		/* DSP-visible FastRPC client ID */
 	u32 status;		/* user PD status */
 };
 static_assert(sizeof(struct fastrpc_dsp_notif_rsp) == 24);
@@ -2675,7 +2675,7 @@ static int fastrpc_rpmsg_callback(struct rpmsg_device *rpdev, void *data,
 		if (notification.ctx == FASTRPC_NOTIF_CTX_RESERVED) {
 			nspm_notification.ctx = notification.ctx;
 			nspm_notification.type = notification.type;
-			nspm_notification.pid = notification.pid;
+			nspm_notification.client_id = notification.client_id;
 			nspm_notification.status = notification.status;
 			qcom_nspm_queue_notification(cctx->nspm,
 						     &nspm_notification);
