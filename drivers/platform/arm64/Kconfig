@@ -131,6 +131,7 @@ config EC_ASUS_ZENBOOK_A14
 	depends on ARCH_QCOM || COMPILE_TEST
 	depends on I2C
 	depends on HWMON
+	depends on CPU_FREQ
 	depends on ACPI_PLATFORM_PROFILE
 	help
 	  Driver for the embedded controller in the Snapdragon X based ASUS
