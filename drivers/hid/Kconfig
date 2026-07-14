@@ -200,6 +200,14 @@ config HID_ASUS
 	- GL553V series
 	- GL753V series
 
+config HID_ASUS_EC
+	tristate "ASUS Zenbook A14 EC keyboard"
+	depends on I2C_HID
+	depends on LEDS_CLASS
+	help
+	  Support for keyboard backlight control and Fn-key hotkey events from
+	  the ASUS I2C-HID keyboard found in the Zenbook A14 UX3407QA.
+
 config HID_AUREAL
 	tristate "Aureal"
 	help
