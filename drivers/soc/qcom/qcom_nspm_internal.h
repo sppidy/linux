@@ -7,6 +7,10 @@
 #include <linux/of.h>
 #include <linux/types.h>
 
+#define QCOM_NSPM_AEE_EQURTMEMMAPCREATE	((s32)0x8000054d)
+#define QCOM_NSPM_AEE_EQURTINVHANDLE		((s32)0x8000054e)
+#define QCOM_NSPM_AEE_EQURTBADASID		((s32)0x8000054f)
+
 static inline int qcom_nspm_iommu_sid(const struct of_phandle_args *iommu,
 				      u32 *sid)
 {
@@ -176,6 +180,19 @@ qcom_nspm_state_can_latch_terminal(enum qcom_nspm_state state)
 static inline bool qcom_nspm_state_can_reserve(enum qcom_nspm_state state)
 {
 	return state == QCOM_NSPM_FREE;
+}
+
+static inline bool qcom_nspm_create_error_degrades(int ret, bool sent_to_dsp)
+{
+	return sent_to_dsp &&
+		(ret == QCOM_NSPM_AEE_EQURTMEMMAPCREATE ||
+		 ret == QCOM_NSPM_AEE_EQURTINVHANDLE ||
+		 ret == QCOM_NSPM_AEE_EQURTBADASID);
+}
+
+static inline bool qcom_nspm_channel_accepts_reservation(bool online, bool accepting, bool degraded)
+{
+	return online && accepting && !degraded;
 }
 
 static inline unsigned int
