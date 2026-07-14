@@ -190,6 +190,12 @@ static inline bool qcom_nspm_create_error_degrades(int ret, bool sent_to_dsp)
 		 ret == QCOM_NSPM_AEE_EQURTBADASID);
 }
 
+static inline bool qcom_nspm_should_degrade(bool enforcement, int ret,
+					    bool sent_to_dsp)
+{
+	return enforcement && qcom_nspm_create_error_degrades(ret, sent_to_dsp);
+}
+
 static inline bool qcom_nspm_channel_accepts_reservation(bool online, bool accepting, bool degraded)
 {
 	return online && accepting && !degraded;
@@ -199,6 +205,24 @@ static inline unsigned int
 qcom_nspm_next_start_index(unsigned int next, unsigned int count)
 {
 	return count ? next % count : 0;
+}
+
+static inline unsigned int
+qcom_nspm_start_index(bool enforcement, unsigned int next, unsigned int count)
+{
+	return enforcement ? qcom_nspm_next_start_index(next, count) : 0;
+}
+
+static inline bool
+qcom_nspm_reservation_allowed(bool enforcement, bool online, bool accepting,
+			      bool degraded, enum qcom_nspm_state state)
+{
+	if (!enforcement)
+		return true;
+
+	return qcom_nspm_channel_accepts_reservation(online, accepting,
+						     degraded) &&
+	       qcom_nspm_state_can_reserve(state);
 }
 
 static inline bool qcom_nspm_notification_is_current(ktime_t queued,

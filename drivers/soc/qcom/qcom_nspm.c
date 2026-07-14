@@ -637,7 +637,8 @@ unsigned int qcom_nspm_session_start_index(struct qcom_nspm *nspm,
 		return 0;
 
 	mutex_lock(&nspm->lock);
-	start = qcom_nspm_next_start_index(nspm->next_bank, count);
+	start = qcom_nspm_start_index(nspm->enforcement, nspm->next_bank,
+				      count);
 	mutex_unlock(&nspm->lock);
 
 	return start;
@@ -678,25 +679,34 @@ int qcom_nspm_session_reserve(struct qcom_nspm *nspm,
 	ret = qcom_nspm_session_device_sid(session_dev, &sid);
 
 	mutex_lock(&nspm->lock);
-	if (ret)
+	if (ret && nspm->enforcement)
 		goto out_failure;
-	if (!qcom_nspm_channel_accepts_reservation(nspm->online,
-						   nspm->accepting,
-						   nspm->degraded)) {
+	if (ret)
+		goto out_observed;
+
+	if (!qcom_nspm_reservation_allowed(nspm->enforcement, nspm->online,
+					   nspm->accepting, nspm->degraded,
+					   QCOM_NSPM_FREE)) {
 		ret = -EPIPE;
 		goto out_failure;
 	}
 
 	bank = qcom_nspm_find_sid_locked(nspm, sid);
 	if (!bank) {
+		if (!nspm->enforcement)
+			goto out_observed;
 		ret = -EINVAL;
 		goto out_failure;
 	}
 
-	if (!qcom_nspm_state_can_reserve(bank->state)) {
+	if (!qcom_nspm_reservation_allowed(nspm->enforcement, nspm->online,
+					   nspm->accepting, nspm->degraded,
+					   bank->state)) {
 		ret = -EBUSY;
 		goto out_failure;
 	}
+	if (!nspm->enforcement && bank->state == QCOM_NSPM_DEAD)
+		goto out_observed;
 
 	if (qcom_nspm_mode_owns_votes(nspm->enforcement)) {
 		ret = qcom_nspm_acquire_votes_locked(nspm);
@@ -715,13 +725,35 @@ int qcom_nspm_session_reserve(struct qcom_nspm *nspm,
 	memset(&bank->last_notification, 0,
 	       sizeof(bank->last_notification));
 
-	qcom_nspm_transition_locked(nspm, bank, QCOM_NSPM_RESERVE, false);
+	if (!nspm->enforcement && bank->state != QCOM_NSPM_FREE) {
+		enum qcom_nspm_state from = bank->state;
+
+		bank->state = QCOM_NSPM_RESERVED;
+		bank->transition_time = ktime_get_boottime();
+		nspm->counters.integrity_errors++;
+		qcom_nspm_log_event_locked(nspm, bank, from,
+					   QCOM_NSPM_RESERVE, 0);
+		trace_nspm_transition(nspm->generation, bank->sid,
+				      bank->client_id, from, bank->state,
+				      QCOM_NSPM_RESERVE, 0);
+	} else {
+		qcom_nspm_transition_locked(nspm, bank, QCOM_NSPM_RESERVE,
+					    false);
+	}
 
 	bank_index = bank - nspm->banks;
-	nspm->next_bank = (bank_index + 1) % QCOM_NSPM_BANK_COUNT;
+	if (nspm->enforcement)
+		nspm->next_bank = (bank_index + 1) % QCOM_NSPM_BANK_COUNT;
 	nspm->counters.reservations++;
 	if (generation)
 		*generation = nspm->generation;
+	trace_nspm_reservation(nspm->generation, sid, client_id, tgid, 0);
+	mutex_unlock(&nspm->lock);
+
+	return 0;
+
+out_observed:
+	/* Observation mode must never change FastRPC allocation semantics. */
 	trace_nspm_reservation(nspm->generation, sid, client_id, tgid, 0);
 	mutex_unlock(&nspm->lock);
 
@@ -803,7 +835,7 @@ void qcom_nspm_create_done(struct qcom_nspm *nspm, u32 generation,
 		event = QCOM_NSPM_CREATE_AMBIGUOUS_FAIL;
 
 	qcom_nspm_transition_locked(nspm, bank, event, false);
-	if (qcom_nspm_create_error_degrades(create_ret, sent_to_dsp)) {
+	if (qcom_nspm_should_degrade(nspm->enforcement, create_ret, sent_to_dsp)) {
 		nspm->degraded = true;
 		nspm->accepting = false;
 		nspm->counters.integrity_errors++;
