@@ -1667,8 +1667,8 @@ static struct fastrpc_session_ctx *fastrpc_session_alloc(
 		    cctx->session[index].valid) {
 			cctx->session[index].used = true;
 			session = &cctx->session[index];
-			/* Keep the DSP client ID stable for this context-bank slot. */
-			fl->client_id = index + 1;
+			/* NSPM firmware identifies a context bank by its DT reg. */
+			fl->client_id = cctx->nspm ? session->sid : index + 1;
 		}
 		spin_unlock_irqrestore(&cctx->lock, flags);
 
