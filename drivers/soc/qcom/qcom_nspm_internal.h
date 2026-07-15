@@ -162,11 +162,24 @@ qcom_nspm_notification_matches_client(u32 client_id,
 }
 
 static inline bool
-qcom_nspm_notification_is_terminal(u32 type, u32 status)
+qcom_nspm_notification_is_terminal(u32 type, u32 status,
+				   enum qcom_nspm_state state)
 {
-	return type == QCOM_NSPM_NOTIF_STATUS_RESPONSE &&
-	       status >= QCOM_NSPM_USER_PD_EXIT &&
-	       status <= QCOM_NSPM_USER_PD_EXCEPTION;
+	if (type != QCOM_NSPM_NOTIF_STATUS_RESPONSE)
+		return false;
+
+	if (status >= QCOM_NSPM_USER_PD_EXIT &&
+	    status <= QCOM_NSPM_USER_PD_EXCEPTION)
+		return true;
+
+	/*
+	 * This firmware reports status 4 after accepting INIT_RELEASE. Keep
+	 * its generic DSP-SSR meaning everywhere except an in-flight release,
+	 * where it is the final asynchronous evidence that the ASID is idle.
+	 */
+	return status == QCOM_NSPM_DSP_SSR &&
+	       (state == QCOM_NSPM_RELEASING ||
+		state == QCOM_NSPM_QUIESCING);
 }
 
 static inline bool
@@ -207,19 +220,10 @@ qcom_nspm_next_start_index(unsigned int next, unsigned int count)
 	return count ? next % count : 0;
 }
 
-static inline unsigned int
-qcom_nspm_start_index(bool enforcement, unsigned int next, unsigned int count)
-{
-	return enforcement ? qcom_nspm_next_start_index(next, count) : 0;
-}
-
 static inline bool
-qcom_nspm_reservation_allowed(bool enforcement, bool online, bool accepting,
-			      bool degraded, enum qcom_nspm_state state)
+qcom_nspm_reservation_allowed(bool online, bool accepting, bool degraded,
+			      enum qcom_nspm_state state)
 {
-	if (!enforcement)
-		return true;
-
 	return qcom_nspm_channel_accepts_reservation(online, accepting,
 						     degraded) &&
 	       qcom_nspm_state_can_reserve(state);

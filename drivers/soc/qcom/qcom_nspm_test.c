@@ -188,18 +188,24 @@ static void qcom_nspm_notification_client_test(struct kunit *test)
 
 static void qcom_nspm_terminal_notification_test(struct kunit *test)
 {
-	KUNIT_EXPECT_TRUE(test,
-			  qcom_nspm_notification_is_terminal(4, 1));
-	KUNIT_EXPECT_TRUE(test,
-			  qcom_nspm_notification_is_terminal(4, 2));
-	KUNIT_EXPECT_TRUE(test,
-			  qcom_nspm_notification_is_terminal(4, 3));
-	KUNIT_EXPECT_FALSE(test,
-			   qcom_nspm_notification_is_terminal(3, 1));
-	KUNIT_EXPECT_FALSE(test,
-			   qcom_nspm_notification_is_terminal(4, 0));
-	KUNIT_EXPECT_FALSE(test,
-			   qcom_nspm_notification_is_terminal(4, 4));
+	bool terminal;
+
+	terminal = qcom_nspm_notification_is_terminal(4, 1, QCOM_NSPM_ACTIVE);
+	KUNIT_EXPECT_TRUE(test, terminal);
+	terminal = qcom_nspm_notification_is_terminal(4, 2, QCOM_NSPM_ACTIVE);
+	KUNIT_EXPECT_TRUE(test, terminal);
+	terminal = qcom_nspm_notification_is_terminal(4, 3, QCOM_NSPM_ACTIVE);
+	KUNIT_EXPECT_TRUE(test, terminal);
+	terminal = qcom_nspm_notification_is_terminal(4, 4, QCOM_NSPM_RELEASING);
+	KUNIT_EXPECT_TRUE(test, terminal);
+	terminal = qcom_nspm_notification_is_terminal(4, 4, QCOM_NSPM_QUIESCING);
+	KUNIT_EXPECT_TRUE(test, terminal);
+	terminal = qcom_nspm_notification_is_terminal(4, 4, QCOM_NSPM_ACTIVE);
+	KUNIT_EXPECT_FALSE(test, terminal);
+	terminal = qcom_nspm_notification_is_terminal(3, 1, QCOM_NSPM_RELEASING);
+	KUNIT_EXPECT_FALSE(test, terminal);
+	terminal = qcom_nspm_notification_is_terminal(4, 0, QCOM_NSPM_RELEASING);
+	KUNIT_EXPECT_FALSE(test, terminal);
 }
 
 static void qcom_nspm_terminal_latch_test(struct kunit *test)
@@ -235,20 +241,15 @@ static void qcom_nspm_reservation_policy_test(struct kunit *test)
 			   qcom_nspm_channel_accepts_reservation(true, true, true));
 	KUNIT_EXPECT_EQ(test, qcom_nspm_next_start_index(14, 12), 2U);
 	KUNIT_EXPECT_EQ(test, qcom_nspm_next_start_index(3, 0), 0U);
-	KUNIT_EXPECT_EQ(test,
-			qcom_nspm_start_index(false, 14, 12),
-			0U);
-	KUNIT_EXPECT_EQ(test,
-			qcom_nspm_start_index(true, 14, 12),
-			2U);
-	KUNIT_EXPECT_TRUE(test,
-			  qcom_nspm_reservation_allowed(false, false, false,
-							true,
-							QCOM_NSPM_QUARANTINED));
 	KUNIT_EXPECT_FALSE(test,
-			   qcom_nspm_reservation_allowed(true, true, true,
-							 false,
+			   qcom_nspm_reservation_allowed(true, true, false,
 							 QCOM_NSPM_QUARANTINED));
+	KUNIT_EXPECT_TRUE(test,
+			  qcom_nspm_reservation_allowed(true, true, false,
+							QCOM_NSPM_FREE));
+	KUNIT_EXPECT_FALSE(test,
+			   qcom_nspm_reservation_allowed(false, true, false,
+							 QCOM_NSPM_FREE));
 }
 
 static void qcom_nspm_integrity_error_test(struct kunit *test)
