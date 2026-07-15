@@ -9,11 +9,16 @@
 #include <linux/tracepoint.h>
 
 TRACE_EVENT(nspm_reservation,
-	TP_PROTO(u32 generation, u32 sid, u32 client_id, s32 tgid, int ret),
-	TP_ARGS(generation, sid, client_id, tgid, ret),
+	TP_PROTO(u32 generation, u32 sid, u32 cb_index, u32 arid_base,
+		 u32 mcdm_client_arid_base, u32 client_id, s32 tgid, int ret),
+	TP_ARGS(generation, sid, cb_index, arid_base, mcdm_client_arid_base,
+		client_id, tgid, ret),
 	TP_STRUCT__entry(
 		__field(u32, generation)
 		__field(u32, sid)
+		__field(u32, cb_index)
+		__field(u32, arid_base)
+		__field(u32, mcdm_client_arid_base)
 		__field(u32, client_id)
 		__field(s32, tgid)
 		__field(int, ret)
@@ -21,13 +26,17 @@ TRACE_EVENT(nspm_reservation,
 	TP_fast_assign(
 		__entry->generation = generation;
 		__entry->sid = sid;
+		__entry->cb_index = cb_index;
+		__entry->arid_base = arid_base;
+		__entry->mcdm_client_arid_base = mcdm_client_arid_base;
 		__entry->client_id = client_id;
 		__entry->tgid = tgid;
 		__entry->ret = ret;
 	),
-	TP_printk("generation=%u sid=%#x client=%u tgid=%d ret=%d",
-		  __entry->generation, __entry->sid, __entry->client_id,
-		  __entry->tgid, __entry->ret)
+	TP_printk("generation=%u sid=%#x cb=%#x arid=%#x mcdm_arid=%#x client=%u tgid=%d ret=%d",
+		  __entry->generation, __entry->sid, __entry->cb_index,
+		  __entry->arid_base, __entry->mcdm_client_arid_base,
+		  __entry->client_id, __entry->tgid, __entry->ret)
 );
 
 TRACE_EVENT(nspm_transition,
