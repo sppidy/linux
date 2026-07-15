@@ -36,6 +36,9 @@ struct qcom_nspm_fifo_event {
 
 struct qcom_nspm_bank {
 	u32 sid;
+	u32 cb_index;
+	u32 arid_base;
+	u32 mcdm_client_arid_base;
 	u32 client_id;
 	pid_t tgid;
 	enum qcom_nspm_state state;
@@ -100,6 +103,7 @@ struct qcom_nspm {
 	struct qcom_nspm_counters counters;
 	struct dentry *debugfs_root;
 	struct device *consumer;
+	u32 smmu_va_bits;
 	u32 generation;
 	u32 next_bank;
 	u32 event_head;
@@ -116,6 +120,7 @@ struct qcom_nspm_snapshot {
 	struct qcom_nspm_bank banks[QCOM_NSPM_BANK_COUNT];
 	struct qcom_nspm_event_log events[QCOM_NSPM_EVENT_DEPTH];
 	struct qcom_nspm_counters counters;
+	u32 smmu_va_bits;
 	u32 generation;
 	u32 event_head;
 	u32 event_count;
@@ -245,6 +250,26 @@ static const struct qcom_nspm_hw_ops qcom_nspm_generic_hw_ops = {
 	.acquire_votes = qcom_nspm_generic_acquire_votes,
 	.release_votes = qcom_nspm_generic_release_votes,
 };
+
+static int qcom_nspm_read_optional_bank_array(struct device *dev,
+					      const char *property,
+					      u32 values[QCOM_NSPM_BANK_COUNT])
+{
+	int count;
+
+	count = device_property_count_u32(dev, property);
+	if (count == -EINVAL)
+		return 0;
+	if (count < 0)
+		return count;
+	if (count != QCOM_NSPM_BANK_COUNT)
+		return dev_err_probe(dev, -EINVAL,
+				     "expected %u values for %s, got %d\n",
+				     QCOM_NSPM_BANK_COUNT, property, count);
+
+	return device_property_read_u32_array(dev, property, values,
+					      QCOM_NSPM_BANK_COUNT);
+}
 
 static int qcom_nspm_acquire_votes_locked(struct qcom_nspm *nspm)
 {
@@ -474,6 +499,7 @@ static int qcom_nspm_state_show(struct seq_file *seq, void *unused)
 	memcpy(snapshot->banks, nspm->banks, sizeof(snapshot->banks));
 	memcpy(snapshot->events, nspm->events, sizeof(snapshot->events));
 	snapshot->counters = nspm->counters;
+	snapshot->smmu_va_bits = nspm->smmu_va_bits;
 	snapshot->generation = nspm->generation;
 	snapshot->event_head = nspm->event_head;
 	snapshot->event_count = nspm->event_count;
@@ -490,6 +516,8 @@ static int qcom_nspm_state_show(struct seq_file *seq, void *unused)
 	seq_printf(seq, "online: %u\naccepting: %u\nvoted: %u\ndegraded: %u\n",
 		   snapshot->online, snapshot->accepting, snapshot->voted,
 		   snapshot->degraded);
+	if (snapshot->smmu_va_bits)
+		seq_printf(seq, "smmu_va_bits: %u\n", snapshot->smmu_va_bits);
 	seq_puts(seq, "terminal_statuses: user-pd 1..3\n");
 
 	seq_printf(seq,
@@ -511,14 +539,16 @@ static int qcom_nspm_state_show(struct seq_file *seq, void *unused)
 		struct qcom_nspm_bank *bank = &snapshot->banks[i];
 
 		seq_printf(seq,
-				   "  %02d sid=%#06x client=%u tgid=%d state=%s age_ms=%lld create=%d release=%d terminal=%u pending=%u mappings=%u notif={type=%u client=%d status=%u}\n",
-			   i, bank->sid, bank->client_id, bank->tgid,
+			   "  %02d sid=%#06x cb=%#x arid=%#x mcdm_arid=%#x client=%u tgid=%d state=%s age_ms=%lld create=%d release=%d terminal=%u pending=%u mappings=%u notif={type=%u client=%d status=%u}\n",
+			   i, bank->sid, bank->cb_index, bank->arid_base,
+			   bank->mcdm_client_arid_base, bank->client_id,
+			   bank->tgid,
 			   qcom_nspm_state_name(bank->state),
 			   ktime_ms_delta(ktime_get_boottime(),
 					  bank->transition_time),
-				   bank->create_ret, bank->release_ret,
-				   bank->terminal_seen, bank->pending, bank->mappings,
-				   bank->last_notification.type,
+			   bank->create_ret, bank->release_ret,
+			   bank->terminal_seen, bank->pending, bank->mappings,
+			   bank->last_notification.type,
 			   bank->last_notification.client_id,
 			   bank->last_notification.status);
 	}
@@ -668,7 +698,7 @@ int qcom_nspm_session_reserve(struct qcom_nspm *nspm,
 			      struct device *session_dev,
 			      u32 client_id, pid_t tgid, u32 *generation)
 {
-	struct qcom_nspm_bank *bank;
+	struct qcom_nspm_bank *bank = NULL;
 	int bank_index;
 	u32 sid = 0;
 	int ret;
@@ -730,21 +760,28 @@ int qcom_nspm_session_reserve(struct qcom_nspm *nspm,
 	nspm->counters.reservations++;
 	if (generation)
 		*generation = nspm->generation;
-	trace_nspm_reservation(nspm->generation, sid, client_id, tgid, 0);
+	trace_nspm_reservation(nspm->generation, sid, bank->cb_index,
+			       bank->arid_base, bank->mcdm_client_arid_base,
+			       client_id, tgid, 0);
 	mutex_unlock(&nspm->lock);
 
 	return 0;
 
 out_observed:
 	/* Observation mode must never change FastRPC allocation semantics. */
-	trace_nspm_reservation(nspm->generation, sid, client_id, tgid, 0);
+	trace_nspm_reservation(nspm->generation, sid, 0, 0, 0, client_id,
+			       tgid, 0);
 	mutex_unlock(&nspm->lock);
 
 	return 0;
 
 out_failure:
 	nspm->counters.reservation_failures++;
-	trace_nspm_reservation(nspm->generation, sid, client_id, tgid, ret);
+	trace_nspm_reservation(nspm->generation, sid,
+			       bank ? bank->cb_index : 0,
+			       bank ? bank->arid_base : 0,
+			       bank ? bank->mcdm_client_arid_base : 0,
+			       client_id, tgid, ret);
 	mutex_unlock(&nspm->lock);
 
 	return ret;
@@ -1012,6 +1049,9 @@ static int qcom_nspm_probe(struct platform_device *pdev)
 {
 	struct qcom_nspm *nspm;
 	struct device *dev = &pdev->dev;
+	u32 arid_bases[QCOM_NSPM_BANK_COUNT] = {};
+	u32 cb_indexes[QCOM_NSPM_BANK_COUNT] = {};
+	u32 mcdm_client_arid_bases[QCOM_NSPM_BANK_COUNT] = {};
 	u32 sids[QCOM_NSPM_BANK_COUNT];
 	int count;
 	int i;
@@ -1028,6 +1068,22 @@ static int qcom_nspm_probe(struct platform_device *pdev)
 					     ARRAY_SIZE(sids));
 	if (ret)
 		return dev_err_probe(dev, ret, "failed to read session SIDs\n");
+
+	ret = qcom_nspm_read_optional_bank_array(dev, "qcom,cb-indexes",
+						 cb_indexes);
+	if (ret)
+		return ret;
+
+	ret = qcom_nspm_read_optional_bank_array(dev, "qcom,arid-bases",
+						 arid_bases);
+	if (ret)
+		return ret;
+
+	ret = qcom_nspm_read_optional_bank_array(dev,
+						 "qcom,mcdm-client-arid-bases",
+						 mcdm_client_arid_bases);
+	if (ret)
+		return ret;
 
 	for (i = 0; i < QCOM_NSPM_BANK_COUNT; i++)
 		for (j = i + 1; j < QCOM_NSPM_BANK_COUNT; j++)
@@ -1056,9 +1112,15 @@ static int qcom_nspm_probe(struct platform_device *pdev)
 	INIT_DELAYED_WORK(&nspm->timeout_work, qcom_nspm_timeout_work);
 	for (i = 0; i < QCOM_NSPM_BANK_COUNT; i++) {
 		nspm->banks[i].sid = sids[i];
+		nspm->banks[i].cb_index = cb_indexes[i];
+		nspm->banks[i].arid_base = arid_bases[i];
+		nspm->banks[i].mcdm_client_arid_base =
+			mcdm_client_arid_bases[i];
 		nspm->banks[i].state = QCOM_NSPM_FREE;
 		nspm->banks[i].transition_time = ktime_get_boottime();
 	}
+	device_property_read_u32(dev, "qcom,smmu-va-bits",
+				 &nspm->smmu_va_bits);
 
 	nspm->workqueue = alloc_ordered_workqueue("qcom_nspm",
 						 WQ_MEM_RECLAIM);
