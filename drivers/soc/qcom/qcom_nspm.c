@@ -2,7 +2,9 @@
 
 #include <linux/debugfs.h>
 #include <linux/device.h>
+#include <linux/dma-mapping.h>
 #include <linux/interconnect.h>
+#include <linux/iommu.h>
 #include <linux/kfifo.h>
 #include <linux/ktime.h>
 #include <linux/limits.h>
@@ -34,6 +36,29 @@ struct qcom_nspm_fifo_event {
 	ktime_t timestamp;
 };
 
+struct qcom_nspm_iommu_mapping {
+	u64 dsp_address;
+	u64 dma_address;
+	u64 physical_address;
+	u64 size;
+	u64 dma_mask;
+	u64 coherent_dma_mask;
+	u64 aperture_start;
+	u64 aperture_end;
+	unsigned long pgsize_bitmap;
+	u64 encoded_iova;
+	u32 encoded_sid;
+	u32 domain_type;
+	u32 max_seg_size;
+	int group_id;
+	bool valid;
+	bool domain_attached;
+	bool translated;
+	bool force_aperture;
+	bool sid_matches;
+	bool iova_matches;
+};
+
 struct qcom_nspm_bank {
 	u32 sid;
 	u32 cb_index;
@@ -50,6 +75,7 @@ struct qcom_nspm_bank {
 	u32 mappings;
 	bool terminal_seen;
 	struct qcom_nspm_notification last_notification;
+	struct qcom_nspm_iommu_mapping iommu_mapping;
 };
 
 struct qcom_nspm_event_log {
@@ -551,6 +577,29 @@ static int qcom_nspm_state_show(struct seq_file *seq, void *unused)
 			   bank->last_notification.type,
 			   bank->last_notification.client_id,
 			   bank->last_notification.status);
+		if (bank->iommu_mapping.valid)
+			seq_printf(
+				seq,
+				"     init_iommu={group=%d domain=%u type=%u pgsize=%#lx aperture=%#llx-%#llx force=%u dma_mask=%#llx coherent_mask=%#llx max_seg=%#x dsp=%#llx dma=%#llx phys=%#llx size=%#llx encoded_sid=%#x encoded_iova=%#llx sid_match=%u iova_match=%u translated=%u}\n",
+				bank->iommu_mapping.group_id,
+				bank->iommu_mapping.domain_attached,
+				bank->iommu_mapping.domain_type,
+				bank->iommu_mapping.pgsize_bitmap,
+				bank->iommu_mapping.aperture_start,
+				bank->iommu_mapping.aperture_end,
+				bank->iommu_mapping.force_aperture,
+				bank->iommu_mapping.dma_mask,
+				bank->iommu_mapping.coherent_dma_mask,
+				bank->iommu_mapping.max_seg_size,
+				bank->iommu_mapping.dsp_address,
+				bank->iommu_mapping.dma_address,
+				bank->iommu_mapping.physical_address,
+				bank->iommu_mapping.size,
+				bank->iommu_mapping.encoded_sid,
+				bank->iommu_mapping.encoded_iova,
+				bank->iommu_mapping.sid_matches,
+				bank->iommu_mapping.iova_matches,
+				bank->iommu_mapping.translated);
 	}
 
 	seq_puts(seq, "events:\n");
@@ -668,7 +717,8 @@ unsigned int qcom_nspm_session_start_index(struct qcom_nspm *nspm,
 		return 0;
 
 	mutex_lock(&nspm->lock);
-	start = qcom_nspm_next_start_index(nspm->next_bank, count);
+	start = qcom_nspm_session_policy_start_index(nspm->enforcement,
+						     nspm->next_bank, count);
 	mutex_unlock(&nspm->lock);
 
 	return start;
@@ -752,6 +802,8 @@ int qcom_nspm_session_reserve(struct qcom_nspm *nspm,
 	bank->reservation_time = ktime_get_boottime();
 	memset(&bank->last_notification, 0,
 	       sizeof(bank->last_notification));
+	memset(&bank->iommu_mapping, 0, sizeof(bank->iommu_mapping));
+	bank->iommu_mapping.group_id = -1;
 
 	qcom_nspm_transition_locked(nspm, bank, QCOM_NSPM_RESERVE, false);
 
@@ -979,6 +1031,85 @@ void qcom_nspm_mapping_event(struct qcom_nspm *nspm, u32 generation, u32 sid,
 	mutex_unlock(&nspm->lock);
 }
 EXPORT_SYMBOL_GPL(qcom_nspm_mapping_event);
+
+void qcom_nspm_iommu_mapping_event(struct qcom_nspm *nspm, u32 generation,
+				   struct device *session_dev, u32 sid,
+				   u32 client_id, u32 sid_pos,
+				   u64 dsp_address, dma_addr_t dma_address,
+				   u64 size)
+{
+	struct qcom_nspm_mapping_identity identity;
+	struct qcom_nspm_iommu_mapping mapping = {
+		.dsp_address = dsp_address,
+		.dma_address = dma_address,
+		.size = size,
+		.group_id = -1,
+		.valid = true,
+	};
+	struct iommu_domain *domain;
+	struct iommu_group *group;
+	struct qcom_nspm_bank *bank;
+	u32 trace_flags;
+	int ret;
+
+	if (!nspm || !session_dev)
+		return;
+
+	ret = qcom_nspm_decode_mapping_identity(dsp_address, dma_address, sid,
+						 sid_pos, &identity);
+	if (ret)
+		return;
+
+	mapping.encoded_sid = identity.encoded_sid;
+	mapping.encoded_iova = identity.encoded_iova;
+	mapping.sid_matches = identity.sid_matches;
+	mapping.iova_matches = identity.iova_matches;
+	mapping.dma_mask = dma_get_mask(session_dev);
+	mapping.coherent_dma_mask = session_dev->coherent_dma_mask;
+	mapping.max_seg_size = dma_get_max_seg_size(session_dev);
+
+	group = iommu_group_get(session_dev);
+	if (group) {
+		mapping.group_id = iommu_group_id(group);
+		iommu_group_put(group);
+	}
+
+	domain = iommu_get_domain_for_dev(session_dev);
+	if (domain) {
+		mapping.domain_attached = true;
+		mapping.domain_type = domain->type;
+		mapping.pgsize_bitmap = domain->pgsize_bitmap;
+		mapping.aperture_start = domain->geometry.aperture_start;
+		mapping.aperture_end = domain->geometry.aperture_end;
+		mapping.force_aperture = domain->geometry.force_aperture;
+		mapping.physical_address =
+			iommu_iova_to_phys(domain, dma_address);
+		mapping.translated = !!mapping.physical_address;
+	}
+
+	mutex_lock(&nspm->lock);
+	if (!qcom_nspm_generation_valid_locked(nspm, generation))
+		goto out_unlock;
+
+	bank = qcom_nspm_find_client_locked(nspm, client_id);
+	if (!bank || bank->sid != sid)
+		goto out_unlock;
+
+	bank->iommu_mapping = mapping;
+	trace_flags = (mapping.domain_attached ? BIT(0) : 0) |
+		      (mapping.translated ? BIT(1) : 0) |
+		      (mapping.sid_matches ? BIT(2) : 0) |
+		      (mapping.iova_matches ? BIT(3) : 0);
+	trace_nspm_iommu_mapping(
+		generation, sid, client_id, mapping.group_id, mapping.domain_type,
+		mapping.dsp_address, mapping.dma_address,
+		mapping.physical_address, mapping.size, mapping.encoded_sid,
+		mapping.encoded_iova, trace_flags);
+
+out_unlock:
+	mutex_unlock(&nspm->lock);
+}
+EXPORT_SYMBOL_GPL(qcom_nspm_iommu_mapping_event);
 
 bool qcom_nspm_queue_notification(
 		struct qcom_nspm *nspm,

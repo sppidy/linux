@@ -2,6 +2,7 @@
 #ifndef __QCOM_NSPM_INTERNAL_H__
 #define __QCOM_NSPM_INTERNAL_H__
 
+#include <linux/bits.h>
 #include <linux/errno.h>
 #include <linux/ktime.h>
 #include <linux/of.h>
@@ -10,6 +11,32 @@
 #define QCOM_NSPM_AEE_EQURTMEMMAPCREATE	((s32)0x8000054d)
 #define QCOM_NSPM_AEE_EQURTINVHANDLE		((s32)0x8000054e)
 #define QCOM_NSPM_AEE_EQURTBADASID		((s32)0x8000054f)
+
+struct qcom_nspm_mapping_identity {
+	u32 encoded_sid;
+	u64 encoded_iova;
+	bool sid_matches;
+	bool iova_matches;
+};
+
+static inline int
+qcom_nspm_decode_mapping_identity(u64 dsp_address, u64 dma_address, u32 sid,
+				  u32 sid_pos,
+				  struct qcom_nspm_mapping_identity *identity)
+{
+	u64 iova_mask;
+
+	if (!identity || !sid_pos || sid_pos >= 64)
+		return -EINVAL;
+
+	iova_mask = GENMASK_ULL(sid_pos - 1, 0);
+	identity->encoded_sid = dsp_address >> sid_pos;
+	identity->encoded_iova = dsp_address & iova_mask;
+	identity->sid_matches = identity->encoded_sid == sid;
+	identity->iova_matches = identity->encoded_iova == dma_address;
+
+	return 0;
+}
 
 static inline int qcom_nspm_iommu_sid(const struct of_phandle_args *iommu,
 				      u32 *sid)
@@ -218,6 +245,16 @@ static inline unsigned int
 qcom_nspm_next_start_index(unsigned int next, unsigned int count)
 {
 	return count ? next % count : 0;
+}
+
+static inline unsigned int
+qcom_nspm_session_policy_start_index(bool enforcement, unsigned int next,
+				     unsigned int count)
+{
+	if (!enforcement)
+		return 0;
+
+	return qcom_nspm_next_start_index(next, count);
 }
 
 static inline bool

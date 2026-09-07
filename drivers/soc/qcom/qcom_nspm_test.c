@@ -241,6 +241,12 @@ static void qcom_nspm_reservation_policy_test(struct kunit *test)
 			   qcom_nspm_channel_accepts_reservation(true, true, true));
 	KUNIT_EXPECT_EQ(test, qcom_nspm_next_start_index(14, 12), 2U);
 	KUNIT_EXPECT_EQ(test, qcom_nspm_next_start_index(3, 0), 0U);
+	KUNIT_EXPECT_EQ(test,
+			qcom_nspm_session_policy_start_index(false, 14, 12),
+			0U);
+	KUNIT_EXPECT_EQ(test,
+			qcom_nspm_session_policy_start_index(true, 14, 12),
+			2U);
 	KUNIT_EXPECT_FALSE(test,
 			   qcom_nspm_reservation_allowed(true, true, false,
 							 QCOM_NSPM_QUARANTINED));
@@ -337,6 +343,45 @@ static void qcom_nspm_iommu_sid_test(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, qcom_nspm_iommu_sid(&iommu, &sid), -EINVAL);
 }
 
+static void qcom_nspm_mapping_identity_test(struct kunit *test)
+{
+	struct qcom_nspm_mapping_identity identity;
+	u64 iova = 0x12345000;
+	u64 dsp_address = (0x0c0cULL << 32) | iova;
+	int ret;
+
+	ret = qcom_nspm_decode_mapping_identity(dsp_address, iova, 0x0c0c,
+						 32, &identity);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+	KUNIT_EXPECT_EQ(test, identity.encoded_sid, 0x0c0cU);
+	KUNIT_EXPECT_EQ(test, identity.encoded_iova, iova);
+	KUNIT_EXPECT_TRUE(test, identity.sid_matches);
+	KUNIT_EXPECT_TRUE(test, identity.iova_matches);
+
+	ret = qcom_nspm_decode_mapping_identity(dsp_address, iova + PAGE_SIZE,
+						 0x0c08, 32, &identity);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+	KUNIT_EXPECT_FALSE(test, identity.sid_matches);
+	KUNIT_EXPECT_FALSE(test, identity.iova_matches);
+}
+
+static void qcom_nspm_mapping_identity_invalid_shift_test(struct kunit *test)
+{
+	struct qcom_nspm_mapping_identity identity;
+
+	KUNIT_EXPECT_EQ(test,
+			qcom_nspm_decode_mapping_identity(0, 0, 0, 0,
+							  &identity),
+			-EINVAL);
+	KUNIT_EXPECT_EQ(test,
+			qcom_nspm_decode_mapping_identity(0, 0, 0, 64,
+							  &identity),
+			-EINVAL);
+	KUNIT_EXPECT_EQ(test,
+			qcom_nspm_decode_mapping_identity(0, 0, 0, 32, NULL),
+			-EINVAL);
+}
+
 static struct kunit_case qcom_nspm_test_cases[] = {
 	KUNIT_CASE(qcom_nspm_valid_transitions_test),
 	KUNIT_CASE(qcom_nspm_exception_transitions_test),
@@ -353,6 +398,8 @@ static struct kunit_case qcom_nspm_test_cases[] = {
 	KUNIT_CASE(qcom_nspm_notification_lifetime_test),
 	KUNIT_CASE(qcom_nspm_release_completion_test),
 	KUNIT_CASE(qcom_nspm_iommu_sid_test),
+	KUNIT_CASE(qcom_nspm_mapping_identity_test),
+	KUNIT_CASE(qcom_nspm_mapping_identity_invalid_shift_test),
 	{ }
 };
 
