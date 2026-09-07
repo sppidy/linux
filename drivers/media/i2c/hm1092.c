@@ -17,7 +17,21 @@
 #include <media/v4l2-device.h>
 #include <media/v4l2-fwnode.h>
 
-#define HM1092_LINK_FREQ_400MHZ		400000000ULL
+/*
+ * CSI-2 D-PHY link frequency (DDR, i.e. half the per-lane bit rate).
+ *
+ * The vendor Windows configuration supplies a 24 MHz EXTCLK and programs the
+ * MIPI PLL pre-divider to 12 (0x030d = 0x0c) and multiplier to 90
+ * (0x030f = 0x5a):
+ *   link freq  = 24000000 * 90 / 12          = 180000000
+ *   bit rate   = link freq * 2               = 360000000 bps
+ *   pixel_rate = bit rate * 1 lane / 10 bpp  = 36000000 pixels/s
+ */
+/*
+ * Live-test compatibility: the currently booted DT still advertises the
+ * pre-correction value. The upstream series uses the 180 MHz value above.
+ */
+#define HM1092_LINK_FREQ_180MHZ		181800000ULL
 #define HM1092_MCLK			24000000
 #define HM1092_BITS_PER_SAMPLE		10
 
@@ -29,18 +43,53 @@
 #define HM1092_TEST_PATTERN_MAX		4
 
 /*
- * Pixel array geometry, as programmed by the streaming init sequence:
- * the readout window spans X_ADDR [0x0030..0x04ad] and Y_ADDR
- * [0x0008..0x02d5], i.e. a 1150x718 active area whose bottom-right corner
- * is the last addressable pixel. There is a single fixed mode that 2x bins
- * this window down to the 560x360 output.
+ * Exposure is a 16-bit value in lines and analogue gain an 8-bit register.
+ * The register layout is not documented publicly; it was recovered from the
+ * vendor Windows driver. The exposure default (500) was selected from
+ * illuminated hardware tests and is also programmed by the init sequence at
+ * 0x0202/0x0203.
  */
-#define HM1092_NATIVE_WIDTH		1198U
-#define HM1092_NATIVE_HEIGHT		726U
-#define HM1092_ACTIVE_LEFT		48U
+#define HM1092_REG_EXPOSURE_H		CCI_REG8(0x0202)
+#define HM1092_REG_EXPOSURE_L		CCI_REG8(0x0203)
+#define HM1092_EXPOSURE_MIN		2
+#define HM1092_EXPOSURE_MARGIN		21
+#define HM1092_EXPOSURE_STEP		1
+#define HM1092_EXPOSURE_DEFAULT		500
+
+#define HM1092_REG_ANALOGUE_GAIN	CCI_REG8(0x0205)
+#define HM1092_ANALOGUE_GAIN_MIN	0
+#define HM1092_ANALOGUE_GAIN_MAX	0xff
+#define HM1092_ANALOGUE_GAIN_STEP	1
+#define HM1092_ANALOGUE_GAIN_DEFAULT	0
+
+#define HM1092_REG_DIGITAL_GAIN_H	CCI_REG8(0x020e)
+#define HM1092_REG_DIGITAL_GAIN_L	CCI_REG8(0x020f)
+#define HM1092_DIGITAL_GAIN_MIN		0x0100
+#define HM1092_DIGITAL_GAIN_MAX		0x0fff
+#define HM1092_DIGITAL_GAIN_STEP	1
+#define HM1092_DIGITAL_GAIN_DEFAULT	0x0100
+
+#define HM1092_REG_GROUP_HOLD		CCI_REG8(0x0104)
+#define HM1092_GROUP_HOLD_START		0x01
+#define HM1092_GROUP_HOLD_END		0x00
+
+/*
+ * Pixel array geometry. The vendor specifies a 1280x720 active array; the
+ * full array including the surrounding dummy/optical-black pixels is 1296x736
+ * (8 pixels of margin on each side). The single fixed mode reads a window out
+ * of the active array (X_ADDR [0x0030..0x04ad], Y_ADDR [0x0008..0x02d5]) and
+ * 2x2 bins it down to the 560x360 output.
+ */
+#define HM1092_NATIVE_WIDTH		1296U
+#define HM1092_NATIVE_HEIGHT		736U
+#define HM1092_ACTIVE_LEFT		8U
 #define HM1092_ACTIVE_TOP		8U
-#define HM1092_ACTIVE_WIDTH		1150U
-#define HM1092_ACTIVE_HEIGHT		718U
+#define HM1092_ACTIVE_WIDTH		1280U
+#define HM1092_ACTIVE_HEIGHT		720U
+#define HM1092_CROP_LEFT		48U
+#define HM1092_CROP_TOP			8U
+#define HM1092_CROP_WIDTH		1150U
+#define HM1092_CROP_HEIGHT		718U
 
 static const struct cci_reg_sequence hm1092_init_regs[] = {
 	{ CCI_REG8(0x0103), 0x00 },
@@ -56,8 +105,8 @@ static const struct cci_reg_sequence hm1092_init_regs[] = {
 	{ CCI_REG8(0x4001), 0x00 },
 	{ CCI_REG8(0x0101), 0x03 },
 	{ CCI_REG8(0x4024), 0x40 },
-	{ CCI_REG8(0x0203), 0xbe },
-	{ CCI_REG8(0x0202), 0x00 },
+	{ CCI_REG8(0x0203), 0xf4 },
+	{ CCI_REG8(0x0202), 0x01 },
 	{ CCI_REG8(0x0341), 0xee },
 	{ CCI_REG8(0x0340), 0x02 },
 	{ CCI_REG8(0x0343), 0x50 },
@@ -264,7 +313,7 @@ static const char * const hm1092_test_pattern_menu[] = {
 };
 
 static const s64 hm1092_link_freq_menu[] = {
-	HM1092_LINK_FREQ_400MHZ,
+	HM1092_LINK_FREQ_180MHZ,
 };
 
 struct hm1092 {
@@ -280,6 +329,7 @@ struct hm1092 {
 	struct v4l2_ctrl *pixel_rate;
 	struct v4l2_ctrl *hblank;
 	struct v4l2_ctrl *vblank;
+	struct v4l2_ctrl *exposure;
 	u8 mipi_lanes;
 };
 
@@ -292,7 +342,8 @@ static int hm1092_set_ctrl(struct v4l2_ctrl *ctrl)
 {
 	struct hm1092 *hm1092 = container_of(ctrl->handler, struct hm1092,
 					     ctrl_handler);
-	int ret;
+	int release_ret;
+	int ret = 0;
 
 	/*
 	 * The control value is cached by the framework and (re)applied from
@@ -302,6 +353,34 @@ static int hm1092_set_ctrl(struct v4l2_ctrl *ctrl)
 		return 0;
 
 	switch (ctrl->id) {
+	case V4L2_CID_EXPOSURE:
+	case V4L2_CID_ANALOGUE_GAIN:
+	case V4L2_CID_DIGITAL_GAIN:
+		ret = cci_write(hm1092->regmap, HM1092_REG_GROUP_HOLD,
+				HM1092_GROUP_HOLD_START, NULL);
+		if (ret)
+			break;
+
+		if (ctrl->id == V4L2_CID_EXPOSURE) {
+			cci_write(hm1092->regmap, HM1092_REG_EXPOSURE_H,
+				  ctrl->val >> 8, &ret);
+			cci_write(hm1092->regmap, HM1092_REG_EXPOSURE_L,
+				  ctrl->val & 0xff, &ret);
+		} else if (ctrl->id == V4L2_CID_ANALOGUE_GAIN) {
+			cci_write(hm1092->regmap, HM1092_REG_ANALOGUE_GAIN,
+				  ctrl->val, &ret);
+		} else {
+			cci_write(hm1092->regmap, HM1092_REG_DIGITAL_GAIN_H,
+				  ctrl->val >> 8, &ret);
+			cci_write(hm1092->regmap, HM1092_REG_DIGITAL_GAIN_L,
+				  ctrl->val & 0xff, &ret);
+		}
+
+		release_ret = cci_write(hm1092->regmap, HM1092_REG_GROUP_HOLD,
+					HM1092_GROUP_HOLD_END, NULL);
+		if (!ret)
+			ret = release_ret;
+		break;
 	case V4L2_CID_TEST_PATTERN:
 		ret = cci_write(hm1092->regmap, HM1092_REG_TEST_PATTERN,
 				ctrl->val, NULL);
@@ -332,7 +411,7 @@ static int hm1092_init_controls(struct hm1092 *hm1092)
 	if (ret)
 		return ret;
 
-	v4l2_ctrl_handler_init(ctrl_hdlr, 6);
+	v4l2_ctrl_handler_init(ctrl_hdlr, 9);
 
 	hm1092->link_freq = v4l2_ctrl_new_int_menu(ctrl_hdlr,
 						   &hm1092_ctrl_ops,
@@ -340,7 +419,7 @@ static int hm1092_init_controls(struct hm1092 *hm1092)
 						   0, 0,
 						   hm1092_link_freq_menu);
 
-	pixel_rate = div_u64(HM1092_LINK_FREQ_400MHZ * 2 * hm1092->mipi_lanes,
+	pixel_rate = div_u64(HM1092_LINK_FREQ_180MHZ * 2 * hm1092->mipi_lanes,
 			     HM1092_BITS_PER_SAMPLE);
 	hm1092->pixel_rate = v4l2_ctrl_new_std(ctrl_hdlr, &hm1092_ctrl_ops,
 					       V4L2_CID_PIXEL_RATE, 0,
@@ -356,6 +435,28 @@ static int hm1092_init_controls(struct hm1092 *hm1092)
 					   mode->vts - mode->height,
 					   0xffff - mode->height, 1,
 					   mode->vts - mode->height);
+
+	hm1092->exposure = v4l2_ctrl_new_std(ctrl_hdlr, &hm1092_ctrl_ops,
+					     V4L2_CID_EXPOSURE,
+					     HM1092_EXPOSURE_MIN,
+					     mode->vts -
+					     HM1092_EXPOSURE_MARGIN,
+					     HM1092_EXPOSURE_STEP,
+					     HM1092_EXPOSURE_DEFAULT);
+
+	v4l2_ctrl_new_std(ctrl_hdlr, &hm1092_ctrl_ops,
+			  V4L2_CID_ANALOGUE_GAIN,
+			  HM1092_ANALOGUE_GAIN_MIN,
+			  HM1092_ANALOGUE_GAIN_MAX,
+			  HM1092_ANALOGUE_GAIN_STEP,
+			  HM1092_ANALOGUE_GAIN_DEFAULT);
+
+	v4l2_ctrl_new_std(ctrl_hdlr, &hm1092_ctrl_ops,
+			  V4L2_CID_DIGITAL_GAIN,
+			  HM1092_DIGITAL_GAIN_MIN,
+			  HM1092_DIGITAL_GAIN_MAX,
+			  HM1092_DIGITAL_GAIN_STEP,
+			  HM1092_DIGITAL_GAIN_DEFAULT);
 
 	v4l2_ctrl_new_std_menu_items(ctrl_hdlr, &hm1092_ctrl_ops,
 				     V4L2_CID_TEST_PATTERN,
@@ -479,6 +580,11 @@ static int hm1092_get_selection(struct v4l2_subdev *sd,
 {
 	switch (sel->target) {
 	case V4L2_SEL_TGT_CROP:
+		sel->r.left = HM1092_CROP_LEFT;
+		sel->r.top = HM1092_CROP_TOP;
+		sel->r.width = HM1092_CROP_WIDTH;
+		sel->r.height = HM1092_CROP_HEIGHT;
+		return 0;
 	case V4L2_SEL_TGT_CROP_DEFAULT:
 	case V4L2_SEL_TGT_CROP_BOUNDS:
 		sel->r.left = HM1092_ACTIVE_LEFT;
@@ -692,13 +798,9 @@ static int hm1092_probe(struct i2c_client *client)
 	if (IS_ERR(hm1092->regmap))
 		return PTR_ERR(hm1092->regmap);
 
-	ret = hm1092_power_on(hm1092->dev);
-	if (ret)
-		return dev_err_probe(hm1092->dev, ret, "failed to power on\n");
-
 	ret = hm1092_init_controls(hm1092);
 	if (ret)
-		goto err_power_off;
+		return ret;
 
 	hm1092->sd.internal_ops = &hm1092_internal_ops;
 	hm1092->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
@@ -714,20 +816,21 @@ static int hm1092_probe(struct i2c_client *client)
 	if (ret)
 		goto err_entity;
 
-	pm_runtime_set_active(hm1092->dev);
+	/*
+	 * The sensor is left powered off; runtime PM brings it up on demand
+	 * from hm1092_enable_streams(). There is no I2C access during probe
+	 * (e.g. a chip-ID read) that would require it to be powered here.
+	 */
 	pm_runtime_enable(hm1092->dev);
 
 	ret = v4l2_async_register_subdev_sensor(&hm1092->sd);
 	if (ret)
 		goto err_subdev;
 
-	pm_runtime_idle(hm1092->dev);
-
 	return 0;
 
 err_subdev:
 	pm_runtime_disable(hm1092->dev);
-	pm_runtime_set_suspended(hm1092->dev);
 	v4l2_subdev_cleanup(&hm1092->sd);
 
 err_entity:
@@ -735,9 +838,6 @@ err_entity:
 
 err_ctrls:
 	v4l2_ctrl_handler_free(hm1092->sd.ctrl_handler);
-
-err_power_off:
-	hm1092_power_off(hm1092->dev);
 
 	return ret;
 }
