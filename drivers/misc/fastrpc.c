@@ -551,7 +551,12 @@ static void fastrpc_user_free(struct kref *ref)
 		fastrpc_buf_free(buf);
 	}
 
-	fastrpc_user_counts(fl, &pending, &mappings);
+	if (fl->dsp_process_init) {
+		pending = 0;
+		mappings = 0;
+	} else {
+		fastrpc_user_counts(fl, &pending, &mappings);
+	}
 	qcom_nspm_session_close(fl->cctx->nspm, fl->nspm_generation,
 				fl->client_id, fl->dsp_process_init, pending,
 				mappings);
@@ -1579,6 +1584,11 @@ static int fastrpc_init_create_process(struct fastrpc_user *fl,
 				fl->sctx->sid, fl->client_id, fl->tgid,
 				QCOM_NSPM_MAPPING_INIT_ALLOC, imem->dma_addr,
 				imem->size, 0, false);
+	qcom_nspm_iommu_mapping_event(
+		fl->cctx->nspm, fl->nspm_generation, fl->sctx->dev,
+		fl->sctx->sid, fl->client_id, fl->cctx->soc_data->sid_pos,
+		imem->dma_addr,
+		fastrpc_ipa_to_dma_addr(fl->cctx, imem->dma_addr), imem->size);
 	args[0].ptr = (u64)(uintptr_t)&inbuf;
 	args[0].length = sizeof(inbuf);
 	args[0].fd = -1;
@@ -1667,8 +1677,12 @@ static struct fastrpc_session_ctx *fastrpc_session_alloc(
 		    cctx->session[index].valid) {
 			cctx->session[index].used = true;
 			session = &cctx->session[index];
-			/* NSPM firmware identifies a context bank by its DT reg. */
-			fl->client_id = cctx->nspm ? session->sid : index + 1;
+			/*
+			 * The client ID is a non-zero DSP process cookie.  Keep
+			 * it contiguous in FastRPC slot order; session->sid is
+			 * independently encoded into DSP-visible DMA addresses.
+			 */
+			fl->client_id = index + 1;
 		}
 		spin_unlock_irqrestore(&cctx->lock, flags);
 
@@ -1763,7 +1777,20 @@ static int fastrpc_device_release(struct inode *inode, struct file *file)
 	list_del(&fl->user);
 	spin_unlock_irqrestore(&cctx->lock, flags);
 
-	fastrpc_user_counts(fl, &pending, &mappings);
+	/*
+	 * After the file is closing, userspace cannot issue more operations for
+	 * this user PD.  The lists may still contain objects held by internal
+	 * cleanup references, but those references must not keep NSPM from
+	 * accepting the DSP's terminal release notification and freeing the bank.
+	 */
+	if (fl->dsp_process_init) {
+		pending = 0;
+		mappings = 0;
+		qcom_nspm_session_close(fl->cctx->nspm, fl->nspm_generation,
+					fl->client_id, true, pending, mappings);
+	} else {
+		fastrpc_user_counts(fl, &pending, &mappings);
+	}
 	qcom_nspm_mapping_event(fl->cctx->nspm, fl->nspm_generation,
 				fl->sctx->sid, fl->client_id, fl->tgid,
 				QCOM_NSPM_MAPPING_FILE_CLOSE, pending, mappings, 0,
