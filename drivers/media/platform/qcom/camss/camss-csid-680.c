@@ -214,6 +214,11 @@ static void __csid_configure_top(struct csid_device *csid)
 {
 	u32 val;
 
+	/* X1P lite CSIDs are local to the lite IFE, not the full wrapper. */
+	if (csid->camss->res->version == CAMSS_X1P42100 &&
+	    csid_is_lite(csid))
+		return;
+
 	val = CSID_TOP_IO_PATH_CFG0_OUTPUT_IFE_EN | CSID_TOP_IO_PATH_CFG0_INTERNAL_CSID;
 	writel(val, csid->camss->csid_wrapper_base +
 	    CSID_TOP_IO_PATH_CFG0(csid->id));

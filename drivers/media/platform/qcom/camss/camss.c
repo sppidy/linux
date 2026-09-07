@@ -4177,6 +4177,47 @@ static const struct camss_subdev_resources csiphy_res_x1p42100[] = {
 	},
 };
 
+/* Keep CSID indices aligned with their normal-world VFE parents. */
+static const struct camss_subdev_resources csid_res_x1p42100[] = {
+	/* CSID0 */
+	{
+		.clock = { "gcc_axi_hf", "gcc_axi_sf", "cpas_ahb",
+			   "cpas_fast_ahb", "csid", "csid_csiphy_rx" },
+		.clock_rate = { { 0 },
+				{ 0 },
+				{ 80000000 },
+				{ 80000000, 100000000, 200000000,
+				  300000000, 400000000 },
+				{ 300000000, 400000000 },
+				{ 300000000, 400000000 }, },
+		.reg = { "csid0" },
+		.interrupt = { "csid0" },
+		.csid = {
+			.hw_ops = &csid_ops_680,
+			.parent_dev_ops = &vfe_parent_dev_ops,
+			.formats = &csid_formats_gen2
+		},
+	},
+	/* CSID_LITE0; lite1 is assigned to SISP by the firmware. */
+	{
+		.clock = { "gcc_axi_hf", "gcc_axi_sf", "cpas_ahb",
+			   "vfe_lite_csid", "vfe_lite_cphy_rx" },
+		.clock_rate = { { 0 },
+				{ 0 },
+				{ 80000000 },
+				{ 266666667, 400000000 },
+				{ 300000000, 400000000 }, },
+		.reg = { "csid_lite0" },
+		.interrupt = { "csid_lite0" },
+		.csid = {
+			.is_lite = true,
+			.hw_ops = &csid_ops_680,
+			.parent_dev_ops = &vfe_parent_dev_ops,
+			.formats = &csid_formats_gen2
+		},
+	},
+};
+
 static const struct camss_subdev_resources vfe_res_x1p42100[] = {
 	/* IFE0 */
 	{
@@ -4217,29 +4258,6 @@ static const struct camss_subdev_resources vfe_res_x1p42100[] = {
 				{ 266666667, 400000000 }, },
 		.reg = { "vfe_lite0" },
 		.interrupt = { "vfe_lite0" },
-		.vfe = {
-			.is_lite = true,
-			.line_num = 4,
-			.hw_ops = &vfe_ops_680,
-			.formats_rdi = &vfe_formats_rdi_845,
-			.formats_pix = &vfe_formats_pix_845
-		},
-	},
-	/* IFE_LITE_1 */
-	{
-		.regulators = {},
-		.clock = { "camnoc_rt_axi", "camnoc_nrt_axi", "cpas_ahb",
-			   "vfe_lite_ahb", "cpas_vfe_lite", "vfe_lite",
-			   "vfe_lite_csid" },
-		.clock_rate = { { 400000000 },
-				{ 0 },
-				{ 0 },
-				{ 0 },
-				{ 0 },
-				{ 266666667, 400000000 },
-				{ 266666667, 400000000 }, },
-		.reg = { "vfe_lite1" },
-		.interrupt = { "vfe_lite1" },
 		.vfe = {
 			.is_lite = true,
 			.line_num = 4,
@@ -4752,6 +4770,11 @@ static int camss_link_entities(struct camss *camss)
 				for (j = 0; j < camss->vfe[k].res->line_num; j++) {
 					struct v4l2_subdev *csid = &camss->csid[i].subdev;
 					struct v4l2_subdev *vfe = &camss->vfe[k].line[j].subdev;
+
+					/* Update and completion use the same CSID/VFE ID. */
+					if (camss->res->version == CAMSS_X1P42100 &&
+					    i != k)
+						continue;
 
 					ret = media_create_pad_link(&csid->entity,
 								    MSM_CSID_PAD_FIRST_SRC + j,
@@ -5459,13 +5482,13 @@ static const struct camss_resources x1p42100_resources = {
 	.version = CAMSS_X1P42100,
 	.pd_name = "top",
 	.csiphy_res = csiphy_res_x1p42100,
-	.csid_res = csid_res_x1e80100,
+	.csid_res = csid_res_x1p42100,
 	.vfe_res = vfe_res_x1p42100,
 	.csid_wrapper_res = &csid_wrapper_res_x1e80100,
 	.icc_res = icc_res_x1e80100,
 	.icc_path_num = ARRAY_SIZE(icc_res_x1e80100),
 	.csiphy_num = ARRAY_SIZE(csiphy_res_x1p42100),
-	.csid_num = ARRAY_SIZE(csid_res_x1e80100),
+	.csid_num = ARRAY_SIZE(csid_res_x1p42100),
 	.vfe_num = ARRAY_SIZE(vfe_res_x1p42100),
 };
 
