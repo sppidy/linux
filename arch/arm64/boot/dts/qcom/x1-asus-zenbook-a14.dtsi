@@ -208,6 +208,22 @@
 			reusable;
 			linux,cma-default;
 		};
+
+		/*
+		 * Keep the low firmware handoff/debug area out of the page
+		 * allocator. Older known-good EL2 DTBs reserved this range, and
+		 * dropping it leaves Linux free to reuse memory that the attached
+		 * DSP stack may still depend on before CDSP FastRPC channels are
+		 * announced.
+		 */
+		ramoops@a0000000 {
+			compatible = "ramoops";
+			reg = <0x0 0xa0000000 0x0 0x200000>;
+			console-size = <0x100000>;
+			pmsg-size = <0x40000>;
+			record-size = <0x40000>;
+			ecc-size = <16>;
+		};
 	};
 
 	sound {
@@ -885,7 +901,7 @@
 		port {
 			hm1092_ep: endpoint {
 				data-lanes = <1>;
-				link-frequencies = /bits/ 64 <400000000>;
+				link-frequencies = /bits/ 64 <181800000>;
 				remote-endpoint = <&csiphy0_in_ep>;
 			};
 		};
