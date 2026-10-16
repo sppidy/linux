@@ -51,6 +51,11 @@ void qcom_nspm_mapping_event(struct qcom_nspm *nspm, u32 generation, u32 sid,
 			     u32 client_id, pid_t tgid,
 			     enum qcom_nspm_mapping_op operation, u64 address,
 			     u64 size, int ret, bool sent_to_dsp);
+void qcom_nspm_iommu_mapping_event(struct qcom_nspm *nspm, u32 generation,
+				   struct device *session_dev, u32 sid,
+				   u32 client_id, u32 sid_pos,
+				   u64 dsp_address, dma_addr_t dma_address,
+				   u64 size);
 bool qcom_nspm_queue_notification(struct qcom_nspm *nspm,
 				  const struct qcom_nspm_notification *notif);
 void qcom_nspm_channel_lost(struct qcom_nspm *nspm);
@@ -124,6 +129,14 @@ static inline void qcom_nspm_mapping_event(struct qcom_nspm *nspm,
 					    enum qcom_nspm_mapping_op operation,
 					    u64 address, u64 size, int ret,
 					    bool sent_to_dsp)
+{
+}
+
+static inline void
+qcom_nspm_iommu_mapping_event(struct qcom_nspm *nspm, u32 generation,
+			      struct device *session_dev, u32 sid,
+			      u32 client_id, u32 sid_pos,
+			      u64 dsp_address, dma_addr_t dma_address, u64 size)
 {
 }
 

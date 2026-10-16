@@ -191,6 +191,52 @@ TRACE_EVENT(nspm_mapping,
 		  __entry->size, __entry->ret, __entry->sent_to_dsp)
 );
 
+TRACE_EVENT(nspm_iommu_mapping,
+	TP_PROTO(u32 generation, u32 sid, u32 client_id, int group_id,
+		 u32 domain_type, u64 dsp_address, u64 dma_address,
+		 u64 physical_address, u64 size, u32 encoded_sid,
+		 u64 encoded_iova, u32 flags),
+	TP_ARGS(generation, sid, client_id, group_id, domain_type, dsp_address,
+		dma_address, physical_address, size, encoded_sid, encoded_iova,
+		flags),
+	TP_STRUCT__entry(
+		__field(u32, generation)
+		__field(u32, sid)
+		__field(u32, client_id)
+		__field(int, group_id)
+		__field(u32, domain_type)
+		__field(u64, dsp_address)
+		__field(u64, dma_address)
+		__field(u64, physical_address)
+		__field(u64, size)
+		__field(u32, encoded_sid)
+		__field(u64, encoded_iova)
+		__field(u32, flags)
+	),
+	TP_fast_assign(
+		__entry->generation = generation;
+		__entry->sid = sid;
+		__entry->client_id = client_id;
+		__entry->group_id = group_id;
+		__entry->domain_type = domain_type;
+		__entry->dsp_address = dsp_address;
+		__entry->dma_address = dma_address;
+		__entry->physical_address = physical_address;
+		__entry->size = size;
+		__entry->encoded_sid = encoded_sid;
+		__entry->encoded_iova = encoded_iova;
+		__entry->flags = flags;
+	),
+	TP_printk("generation=%u sid=%#x client=%u group=%d domain_type=%u dsp=%#llx dma=%#llx phys=%#llx size=%#llx encoded_sid=%#x encoded_iova=%#llx domain=%d translated=%d sid_match=%d iova_match=%d",
+		  __entry->generation, __entry->sid, __entry->client_id,
+		  __entry->group_id, __entry->domain_type, __entry->dsp_address,
+		  __entry->dma_address,
+		  __entry->physical_address, __entry->size,
+		  __entry->encoded_sid, __entry->encoded_iova,
+		  !!(__entry->flags & BIT(0)), !!(__entry->flags & BIT(1)),
+		  !!(__entry->flags & BIT(2)), !!(__entry->flags & BIT(3)))
+);
+
 #endif
 
 #undef TRACE_INCLUDE_PATH
