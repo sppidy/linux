@@ -57,8 +57,8 @@
 
 enum asus_copilot_state {
 	ASUS_COPILOT_IDLE,
-	ASUS_COPILOT_DOWN,
-	ASUS_COPILOT_RELEASING,
+	ASUS_COPILOT_DOWN,	/* F23 held, KEY_ASSISTANT reported down */
+	ASUS_COPILOT_RELEASED,	/* F23 gone, waiting for all keys up */
 };
 
 struct asus_hid_data {
@@ -175,18 +175,15 @@ static bool asus_kbd_no_keys(const u8 *raw)
 	return !memchr_inv(raw + A14_KBD_KEYS, 0, A14_KBD_NKEYS);
 }
 
-static bool asus_kbd_only_key(const u8 *raw, u8 usage)
+/* Drop the Copilot chord (F23 and its GUI+Shift) from a report. */
+static void asus_kbd_strip_copilot(u8 *raw)
 {
-	int i, n = 0;
+	int i;
 
-	for (i = 0; i < A14_KBD_NKEYS; i++) {
-		if (!raw[A14_KBD_KEYS + i])
-			continue;
-		if (raw[A14_KBD_KEYS + i] != usage)
-			return false;
-		n++;
-	}
-	return n == 1;
+	raw[A14_KBD_MODS] &= ~A14_KBD_COPILOT_MODS;
+	for (i = 0; i < A14_KBD_NKEYS; i++)
+		if (raw[A14_KBD_KEYS + i] == A14_KBD_USAGE_F23)
+			raw[A14_KBD_KEYS + i] = 0;
 }
 
 /* Report modifier changes straight to the keyboard input device. */
@@ -243,41 +240,40 @@ static int asus_kbd_raw_event(struct hid_device *hdev,
 
 	spin_lock_irqsave(&data->kbd_lock, flags);
 
-	switch (data->copilot) {
-	case ASUS_COPILOT_DOWN:
-		if (asus_kbd_has_key(raw, A14_KBD_USAGE_F23)) {
-			ret = -EINPROGRESS;
-			goto out;
+	dev_dbg(&hdev->dev, "kbd %*ph copilot=%d holding=%d\n",
+		A14_KBD_REPORT_SIZE, raw, data->copilot, data->holding);
+
+	/*
+	 * While the Copilot key is down the firmware keeps GUI+Shift+F23 in
+	 * every report, also around other keys pressed with it. Strip the chord
+	 * and pass the rest on, so those keys reach the HID core normally.
+	 */
+	if (data->copilot != ASUS_COPILOT_IDLE) {
+		if (data->copilot == ASUS_COPILOT_DOWN &&
+		    !asus_kbd_has_key(raw, A14_KBD_USAGE_F23)) {
+			asus_copilot_report(data, 0);
+			data->copilot = ASUS_COPILOT_RELEASED;
 		}
-		asus_copilot_report(data, 0);
-		data->copilot = ASUS_COPILOT_RELEASING;
-		fallthrough;
-	case ASUS_COPILOT_RELEASING:
-		/* Swallow the firmware's trailing Shift and GUI releases. */
-		if (asus_kbd_no_keys(raw) && !(mods & ~A14_KBD_COPILOT_MODS)) {
-			if (!mods) {
-				data->copilot = ASUS_COPILOT_IDLE;
-				data->kbd_idle = true;
-			}
-			ret = -EINPROGRESS;
-			goto out;
-		}
-		data->copilot = ASUS_COPILOT_IDLE;
-		break;
-	case ASUS_COPILOT_IDLE:
-		break;
+		asus_kbd_strip_copilot(raw);
+		if (data->copilot == ASUS_COPILOT_RELEASED && !mods &&
+		    asus_kbd_no_keys(raw))
+			data->copilot = ASUS_COPILOT_IDLE;
+		data->kbd_idle = data->copilot == ASUS_COPILOT_IDLE;
+		goto out;
 	}
 
 	if (data->holding) {
 		if (mods == A14_KBD_COPILOT_MODS &&
-		    asus_kbd_only_key(raw, A14_KBD_USAGE_F23)) {
+		    asus_kbd_has_key(raw, A14_KBD_USAGE_F23)) {
 			data->holding = false;
 			cancel_delayed_work(&data->kbd_hold_work);
 			asus_kbd_report_mods(data, data->injected_mods, 0);
 			data->injected_mods = 0;
 			asus_copilot_report(data, 1);
 			data->copilot = ASUS_COPILOT_DOWN;
-			ret = -EINPROGRESS;
+			/* Pass on any other key already pressed with it. */
+			asus_kbd_strip_copilot(raw);
+			data->kbd_idle = false;
 			goto out;
 		}
 		if (mods == A14_KBD_COPILOT_MODS && asus_kbd_no_keys(raw) &&
