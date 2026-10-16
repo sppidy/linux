@@ -267,6 +267,9 @@
  */
 &camss {
 	compatible = "qcom,x1p42100-camss";
+	phys = <&csiphy0 PHY_TYPE_DPHY>,
+	       <&csiphy4 PHY_TYPE_DPHY>;
+	phy-names = "csiphy0", "csiphy4";
 };
 
 /*
