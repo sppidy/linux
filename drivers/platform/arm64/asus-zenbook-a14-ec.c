@@ -78,6 +78,13 @@
 #define EC_SETTLE_INTERVAL_US	50000
 #define EC_SETTLE_TIMEOUT_MS	2000
 
+/*
+ * The EC occasionally NACKs a transfer while its firmware is busy, most often
+ * right after boot. Retry those a few times before failing the access.
+ */
+#define EC_XFER_TRIES		5
+#define EC_XFER_RETRY_US	10000
+
 /* QA-only: WEBC block-write window at major 0xc9 (DSDT WEBC method).
  * Payload bytes go to 0x40..0x6e, then BMCR(0x6f) is set to 0x80 to kick.
  */
@@ -201,6 +208,23 @@ struct asus_ec {
 /* EC primitives — caller MUST hold ec->lock                          */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Every EC access first rewrites the register address, and repeating a write
+ * stores the same value again, so retrying a NACKed transfer is safe.
+ */
+static int __ec_xfer(struct asus_ec *ec, struct i2c_msg *msgs, int num)
+{
+	int tries = EC_XFER_TRIES;
+	int ret;
+
+	for (;;) {
+		ret = i2c_transfer(ec->adapter, msgs, num);
+		if (ret != -ENXIO || !--tries)
+			return ret;
+		usleep_range(EC_XFER_RETRY_US, EC_XFER_RETRY_US + 5000);
+	}
+}
+
 static int __ec_rb(struct asus_ec *ec, u8 maj, u8 min, u8 *out)
 {
 	struct i2c_msg msgs[3];
@@ -226,7 +250,7 @@ static int __ec_rb(struct asus_ec *ec, u8 maj, u8 min, u8 *out)
 	msgs[2].len   = 1;
 	msgs[2].buf   = &ec->rx;
 
-	ret = i2c_transfer(ec->adapter, msgs, 3);
+	ret = __ec_xfer(ec, msgs, 3);
 	if (ret < 0) {
 		dev_dbg(ec->dev, "ecrb(0x%02x,0x%02x) failed: %d\n",
 			maj, min, ret);
@@ -262,7 +286,7 @@ static int __ec_wb(struct asus_ec *ec, u8 maj, u8 min, u8 val)
 	msgs[1].len   = 2;
 	msgs[1].buf   = data;
 
-	ret = i2c_transfer(ec->adapter, msgs, 2);
+	ret = __ec_xfer(ec, msgs, 2);
 	if (ret < 0) {
 		dev_dbg(ec->dev, "ecwb(0x%02x,0x%02x,0x%02x) failed: %d\n",
 			maj, min, val, ret);
