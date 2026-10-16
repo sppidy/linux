@@ -5991,10 +5991,27 @@ static const struct dev_pm_ops camss_pm_ops = {
 	SET_RUNTIME_PM_OPS(camss_runtime_suspend, camss_runtime_resume, NULL)
 };
 
+static ssize_t facelock_capability_show(struct device *dev,
+					       struct device_attribute *attr, char *buf)
+{
+	struct camss *camss = dev_get_drvdata(dev);
+
+	return sysfs_emit(buf, "%s\n", camss->res->version == CAMSS_X1P42100 ?
+			  "x1p-normal-world-v1" : "unsupported");
+}
+static DEVICE_ATTR_RO(facelock_capability);
+
+static struct attribute *facelock_attrs[] = {
+	&dev_attr_facelock_capability.attr,
+	NULL,
+};
+ATTRIBUTE_GROUPS(facelock);
+
 static struct platform_driver qcom_camss_driver = {
 	.probe = camss_probe,
 	.remove = camss_remove,
 	.driver = {
+		.dev_groups = facelock_groups,
 		.name = "qcom-camss",
 		.of_match_table = camss_dt_match,
 		.pm = &camss_pm_ops,
