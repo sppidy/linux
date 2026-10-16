@@ -933,7 +933,7 @@
 		port {
 			hm1092_ep: endpoint {
 				data-lanes = <1>;
-				link-frequencies = /bits/ 64 <400000000>;
+				link-frequencies = /bits/ 64 <181800000>;
 				remote-endpoint = <&csiphy0_in_ep>;
 			};
 		};
