@@ -96,6 +96,41 @@ static void asus_kbd_set_brightness(struct led_classdev *led_cdev,
 	data->saved_brightness = (enum led_brightness)level;
 }
 
+/*
+ * The keyboard key array is declared with Logical Maximum 0x65, but the
+ * firmware sends usages above it: the Copilot key reports F23 (0x72). The HID
+ * core drops array values beyond the logical maximum, so raise it to 0x7f
+ * (Usage Maximum is 0xdd, but a one-byte Logical Maximum is signed).
+ */
+static const u8 asus_kbd_keys_desc[] = {
+	0x95, 0x06,		/* Report Count (6)		*/
+	0x75, 0x08,		/* Report Size (8)		*/
+	0x15, 0x00,		/* Logical Minimum (0)		*/
+	0x25, 0x65,		/* Logical Maximum (101)	*/
+	0x05, 0x07,		/* Usage Page (Keyboard)	*/
+	0x19, 0x00,		/* Usage Minimum (0)		*/
+	0x29, 0xdd,		/* Usage Maximum (221)		*/
+	0x81, 0x00,		/* Input (Data,Arr,Abs)		*/
+};
+#define ASUS_KBD_KEYS_LMAX_OFFSET	7
+
+static const __u8 *asus_report_fixup(struct hid_device *hdev, __u8 *rdesc,
+				     unsigned int *rsize)
+{
+	unsigned int i;
+
+	for (i = 0; i + sizeof(asus_kbd_keys_desc) <= *rsize; i++) {
+		if (memcmp(rdesc + i, asus_kbd_keys_desc,
+			   sizeof(asus_kbd_keys_desc)))
+			continue;
+		hid_info(hdev, "fixing up keyboard key array logical maximum\n");
+		rdesc[i + ASUS_KBD_KEYS_LMAX_OFFSET] = 0x7f;
+		break;
+	}
+
+	return rdesc;
+}
+
 static int asus_raw_event(struct hid_device *hdev, struct hid_report *report,
 			  u8 *raw_data, int size)
 {
@@ -332,6 +367,7 @@ static struct hid_driver hid_asus_ec_driver = {
 	.id_table   = asus_hid_devices,
 	.probe      = asus_hid_probe,
 	.remove     = asus_hid_remove,
+	.report_fixup = asus_report_fixup,
 	.raw_event  = asus_raw_event,
 	.suspend    = asus_hid_suspend,
 	.resume     = asus_hid_resume,
