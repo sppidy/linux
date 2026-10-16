@@ -220,6 +220,16 @@ qcom_nspm_next_start_index(unsigned int next, unsigned int count)
 	return count ? next % count : 0;
 }
 
+static inline unsigned int
+qcom_nspm_session_policy_start_index(bool enforcement, unsigned int next,
+				     unsigned int count)
+{
+	if (!enforcement)
+		return 0;
+
+	return qcom_nspm_next_start_index(next, count);
+}
+
 static inline bool
 qcom_nspm_reservation_allowed(bool online, bool accepting, bool degraded,
 			      enum qcom_nspm_state state)

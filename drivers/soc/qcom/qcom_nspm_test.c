@@ -241,6 +241,12 @@ static void qcom_nspm_reservation_policy_test(struct kunit *test)
 			   qcom_nspm_channel_accepts_reservation(true, true, true));
 	KUNIT_EXPECT_EQ(test, qcom_nspm_next_start_index(14, 12), 2U);
 	KUNIT_EXPECT_EQ(test, qcom_nspm_next_start_index(3, 0), 0U);
+	KUNIT_EXPECT_EQ(test,
+			qcom_nspm_session_policy_start_index(false, 14, 12),
+			0U);
+	KUNIT_EXPECT_EQ(test,
+			qcom_nspm_session_policy_start_index(true, 14, 12),
+			2U);
 	KUNIT_EXPECT_FALSE(test,
 			   qcom_nspm_reservation_allowed(true, true, false,
 							 QCOM_NSPM_QUARANTINED));

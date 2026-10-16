@@ -668,7 +668,8 @@ unsigned int qcom_nspm_session_start_index(struct qcom_nspm *nspm,
 		return 0;
 
 	mutex_lock(&nspm->lock);
-	start = qcom_nspm_next_start_index(nspm->next_bank, count);
+	start = qcom_nspm_session_policy_start_index(nspm->enforcement,
+						     nspm->next_bank, count);
 	mutex_unlock(&nspm->lock);
 
 	return start;
