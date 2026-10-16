@@ -1860,7 +1860,8 @@
 };
 
 /*
- * PM8550 flash LED controller — left disabled.
+ * PM8550 flash LED controller used by the HM1092 IR illuminator; the
+ * Facelock-facing channel override is enabled below.
  * Tested all four channels individually (led-sources = <1>, <2>, <3>,
  * <4>) at up to 50 mA torch: no IR glow visible via phone camera, and
  * flash_fault was empty in every case. PMIC firmware appears to own
@@ -1871,3 +1872,16 @@
  * directly. Re-enabling leds-qcom-flash on this node also regressed
  * qcom-battmgr on at least one boot.
  */
+
+&pm8550_flash {
+	status = "okay";
+
+	led-0 {
+		function = LED_FUNCTION_FLASH;
+		color = <LED_COLOR_ID_IR>;
+		led-sources = <4>;
+		led-max-microamp = <180000>;
+		flash-max-microamp = <700000>;
+		flash-max-timeout-us = <1280000>;
+	};
+};
