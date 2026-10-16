@@ -244,6 +244,16 @@ config TCG_FTPM_TEE
 	help
 	  This driver proxies for firmware TPM running in TEE.
 
+config TCG_QTZ
+	tristate "Qualcomm QSEE fTPM (qcom.tz.tpm) Interface"
+	depends on QCOM_QSEECOM && QCOM_TZMEM
+	help
+	  This driver talks to the firmware TPM 2.0 implemented by the
+	  "qcom.tz.tpm" QSEE trusted application on Qualcomm Snapdragon X
+	  laptops booted with devicetree. Commands are exchanged through a
+	  CRB buffer shared with the secure world. To compile this driver
+	  as a module, choose M here; the module will be called tpm_qtz.
+
 config TCG_SVSM
 	tristate "SNP SVSM vTPM interface"
 	depends on AMD_MEM_ENCRYPT
