@@ -18,6 +18,8 @@
 #include <linux/string.h>
 #include <linux/delay.h>
 #include <linux/pm.h>
+#include <linux/spinlock.h>
+#include <linux/workqueue.h>
 
 #define ASUS_VENDOR_ID		0x0B05
 #define ASUS_PRODUCT_ID		0x0220
@@ -37,12 +39,44 @@
 #define A14_EC_EVT_KEY_FN_F12	0x86
 #define A14_EC_EVT_KEY_FN_F	0x9d
 
+/*
+ * The Copilot key is sent as three keyboard reports: Left GUI, then Left GUI +
+ * Left Shift, then Left GUI + Left Shift + F23. A lone Left GUI press from an
+ * idle keyboard is held back briefly to see whether that sequence follows.
+ */
+#define A14_KBD_REPORT_ID	0x02
+#define A14_KBD_REPORT_SIZE	9
+#define A14_KBD_MODS		1
+#define A14_KBD_KEYS		3
+#define A14_KBD_NKEYS		6
+#define A14_KBD_MOD_LSHIFT	BIT(1)
+#define A14_KBD_MOD_LGUI	BIT(3)
+#define A14_KBD_COPILOT_MODS	(A14_KBD_MOD_LGUI | A14_KBD_MOD_LSHIFT)
+#define A14_KBD_USAGE_F23	0x72
+#define A14_KBD_HOLD_MS		30
+
+enum asus_copilot_state {
+	ASUS_COPILOT_IDLE,
+	ASUS_COPILOT_DOWN,
+	ASUS_COPILOT_RELEASING,
+};
+
 struct asus_hid_data {
 	struct hid_device *hdev;
 	struct led_classdev kbd_led_cdev;
 	struct input_dev *hotkey_input_dev;
 	enum led_brightness saved_brightness;
 	bool interfaces_ready;
+
+	/* Copilot key detection on the keyboard report, under kbd_lock. */
+	spinlock_t kbd_lock;
+	struct delayed_work kbd_hold_work;
+	struct input_dev *kbd_input;
+	u8 held[A14_KBD_REPORT_SIZE];
+	bool holding;
+	u8 injected_mods;
+	bool kbd_idle;
+	enum asus_copilot_state copilot;
 };
 
 static int asus_send_ec_command(struct hid_device *hdev, u8 *cmd_buf)
@@ -131,6 +165,152 @@ static const __u8 *asus_report_fixup(struct hid_device *hdev, __u8 *rdesc,
 	return rdesc;
 }
 
+static bool asus_kbd_has_key(const u8 *raw, u8 usage)
+{
+	return memchr(raw + A14_KBD_KEYS, usage, A14_KBD_NKEYS);
+}
+
+static bool asus_kbd_no_keys(const u8 *raw)
+{
+	return !memchr_inv(raw + A14_KBD_KEYS, 0, A14_KBD_NKEYS);
+}
+
+static bool asus_kbd_only_key(const u8 *raw, u8 usage)
+{
+	int i, n = 0;
+
+	for (i = 0; i < A14_KBD_NKEYS; i++) {
+		if (!raw[A14_KBD_KEYS + i])
+			continue;
+		if (raw[A14_KBD_KEYS + i] != usage)
+			return false;
+		n++;
+	}
+	return n == 1;
+}
+
+/* Report modifier changes straight to the keyboard input device. */
+static void asus_kbd_report_mods(struct asus_hid_data *data, u8 mods, int value)
+{
+	if (!data->kbd_input || !mods)
+		return;
+	if (mods & A14_KBD_MOD_LGUI)
+		input_report_key(data->kbd_input, KEY_LEFTMETA, value);
+	if (mods & A14_KBD_MOD_LSHIFT)
+		input_report_key(data->kbd_input, KEY_LEFTSHIFT, value);
+	input_sync(data->kbd_input);
+}
+
+static void asus_copilot_report(struct asus_hid_data *data, int value)
+{
+	input_report_key(data->hotkey_input_dev, KEY_ASSISTANT, value);
+	input_sync(data->hotkey_input_dev);
+}
+
+/*
+ * A held Left GUI press timed out without the Copilot sequence following.
+ * Report the held modifiers now so that a key held on its own (e.g. Super
+ * for a pointer drag) still works; the held report itself is replayed to the
+ * HID core when the next keyboard report arrives.
+ */
+static void asus_kbd_hold_timeout(struct work_struct *work)
+{
+	struct asus_hid_data *data = container_of(to_delayed_work(work),
+						  struct asus_hid_data,
+						  kbd_hold_work);
+	unsigned long flags;
+	u8 mods;
+
+	spin_lock_irqsave(&data->kbd_lock, flags);
+	if (data->holding) {
+		mods = data->held[A14_KBD_MODS] & ~data->injected_mods;
+		asus_kbd_report_mods(data, mods, 1);
+		data->injected_mods |= mods;
+	}
+	spin_unlock_irqrestore(&data->kbd_lock, flags);
+}
+
+/*
+ * Returns < 0 to swallow the report, 0 to let the HID core process it.
+ * Called with the HID core's input lock held.
+ */
+static int asus_kbd_raw_event(struct hid_device *hdev,
+			      struct asus_hid_data *data, u8 *raw)
+{
+	u8 mods = raw[A14_KBD_MODS];
+	unsigned long flags;
+	int ret = 0;
+
+	spin_lock_irqsave(&data->kbd_lock, flags);
+
+	switch (data->copilot) {
+	case ASUS_COPILOT_DOWN:
+		if (asus_kbd_has_key(raw, A14_KBD_USAGE_F23)) {
+			ret = -EINPROGRESS;
+			goto out;
+		}
+		asus_copilot_report(data, 0);
+		data->copilot = ASUS_COPILOT_RELEASING;
+		fallthrough;
+	case ASUS_COPILOT_RELEASING:
+		/* Swallow the firmware's trailing Shift and GUI releases. */
+		if (asus_kbd_no_keys(raw) && !(mods & ~A14_KBD_COPILOT_MODS)) {
+			if (!mods) {
+				data->copilot = ASUS_COPILOT_IDLE;
+				data->kbd_idle = true;
+			}
+			ret = -EINPROGRESS;
+			goto out;
+		}
+		data->copilot = ASUS_COPILOT_IDLE;
+		break;
+	case ASUS_COPILOT_IDLE:
+		break;
+	}
+
+	if (data->holding) {
+		if (mods == A14_KBD_COPILOT_MODS &&
+		    asus_kbd_only_key(raw, A14_KBD_USAGE_F23)) {
+			data->holding = false;
+			cancel_delayed_work(&data->kbd_hold_work);
+			asus_kbd_report_mods(data, data->injected_mods, 0);
+			data->injected_mods = 0;
+			asus_copilot_report(data, 1);
+			data->copilot = ASUS_COPILOT_DOWN;
+			ret = -EINPROGRESS;
+			goto out;
+		}
+		if (mods == A14_KBD_COPILOT_MODS && asus_kbd_no_keys(raw) &&
+		    data->held[A14_KBD_MODS] == A14_KBD_MOD_LGUI) {
+			memcpy(data->held, raw, A14_KBD_REPORT_SIZE);
+			mod_delayed_work(system_wq, &data->kbd_hold_work,
+					 msecs_to_jiffies(A14_KBD_HOLD_MS));
+			ret = -EINPROGRESS;
+			goto out;
+		}
+		/* Not the Copilot key: replay the held report, then this one. */
+		data->holding = false;
+		cancel_delayed_work(&data->kbd_hold_work);
+		data->injected_mods = 0;
+		hid_report_raw_event(hdev, HID_INPUT_REPORT, data->held,
+				     A14_KBD_REPORT_SIZE, A14_KBD_REPORT_SIZE, 1);
+	} else if (data->kbd_idle && mods == A14_KBD_MOD_LGUI &&
+		   asus_kbd_no_keys(raw)) {
+		memcpy(data->held, raw, A14_KBD_REPORT_SIZE);
+		data->holding = true;
+		data->injected_mods = 0;
+		mod_delayed_work(system_wq, &data->kbd_hold_work,
+				 msecs_to_jiffies(A14_KBD_HOLD_MS));
+		ret = -EINPROGRESS;
+		goto out;
+	}
+
+	data->kbd_idle = !mods && asus_kbd_no_keys(raw);
+out:
+	spin_unlock_irqrestore(&data->kbd_lock, flags);
+	return ret;
+}
+
 static int asus_raw_event(struct hid_device *hdev, struct hid_report *report,
 			  u8 *raw_data, int size)
 {
@@ -141,6 +321,12 @@ static int asus_raw_event(struct hid_device *hdev, struct hid_report *report,
 		return 0;
 
 	input_dev = data->hotkey_input_dev;
+
+	if (report->id == A14_KBD_REPORT_ID && size == A14_KBD_REPORT_SIZE) {
+		if (!data->kbd_input && report->maxfield && report->field[0]->hidinput)
+			data->kbd_input = report->field[0]->hidinput->input;
+		return asus_kbd_raw_event(hdev, data, raw_data);
+	}
 
 	if (report->id == A14_EC_REPORT_ID && size >= 2) {
 		u8 usage_code = raw_data[1];
@@ -226,6 +412,8 @@ static int asus_hid_suspend(struct hid_device *hdev, pm_message_t message)
 	struct asus_hid_data *data = hid_get_drvdata(hdev);
 	enum led_brightness saved_brightness = data->saved_brightness;
 
+	cancel_delayed_work_sync(&data->kbd_hold_work);
+
 	if (message.event == PM_EVENT_SUSPEND || message.event == PM_EVENT_HIBERNATE) {
 		asus_kbd_set_brightness(&data->kbd_led_cdev, LED_OFF);
 		data->saved_brightness = saved_brightness;
@@ -297,6 +485,9 @@ static int asus_hid_probe(struct hid_device *hdev, const struct hid_device_id *i
 	data->hdev = hdev;
 	hid_set_drvdata(hdev, data);
 	data->saved_brightness = A14_EC_MAX_BACKLIGHT;
+	spin_lock_init(&data->kbd_lock);
+	INIT_DELAYED_WORK(&data->kbd_hold_work, asus_kbd_hold_timeout);
+	data->kbd_idle = true;
 	ret = hid_parse(hdev);
 	if (ret)
 		return ret;
@@ -327,6 +518,7 @@ static int asus_hid_probe(struct hid_device *hdev, const struct hid_device_id *i
 	set_bit(KEY_TOUCHPAD_TOGGLE, data->hotkey_input_dev->keybit);
 	set_bit(KEY_PROG1, data->hotkey_input_dev->keybit);
 	set_bit(KEY_PERFORMANCE, data->hotkey_input_dev->keybit);
+	set_bit(KEY_ASSISTANT, data->hotkey_input_dev->keybit);
 
 	ret = input_register_device(data->hotkey_input_dev);
 	if (ret) {
@@ -357,6 +549,7 @@ static void asus_hid_remove(struct hid_device *hdev)
 	struct asus_hid_data *data = hid_get_drvdata(hdev);
 
 	WRITE_ONCE(data->interfaces_ready, false);
+	cancel_delayed_work_sync(&data->kbd_hold_work);
 	led_classdev_unregister(&data->kbd_led_cdev);
 	input_unregister_device(data->hotkey_input_dev);
 	hid_hw_stop(hdev);
