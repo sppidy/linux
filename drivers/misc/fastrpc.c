@@ -1582,6 +1582,11 @@ static int fastrpc_init_create_process(struct fastrpc_user *fl,
 				fl->sctx->sid, fl->client_id, fl->tgid,
 				QCOM_NSPM_MAPPING_INIT_ALLOC, imem->dma_addr,
 				imem->size, 0, false);
+	qcom_nspm_iommu_mapping_event(
+		fl->cctx->nspm, fl->nspm_generation, fl->sctx->dev,
+		fl->sctx->sid, fl->client_id, fl->cctx->soc_data->sid_pos,
+		imem->dma_addr,
+		fastrpc_ipa_to_dma_addr(fl->cctx, imem->dma_addr), imem->size);
 	args[0].ptr = (u64)(uintptr_t)&inbuf;
 	args[0].length = sizeof(inbuf);
 	args[0].fd = -1;
