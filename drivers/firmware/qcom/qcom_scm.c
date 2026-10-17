@@ -1035,6 +1035,38 @@ EXPORT_SYMBOL_GPL(qcom_scm_pas_prepare_and_auth_reset);
  *
  * Returns 0 on success.
  */
+/* A14 EL2 cdsp crash-recovery test: QHEE's PIL_RESTART sequence for a
+ * crashed subsystem uses PIL_RESUME (event 0x20021c -> classic id 0x1c),
+ * which the driver never sends. Try it after auth_and_reset. */
+int qcom_scm_pas_resume(u32 pas_id)
+{
+	int ret;
+	struct qcom_scm_desc desc = {
+		.svc = QCOM_SCM_SVC_PIL,
+		.cmd = 0x1c,
+		.arginfo = QCOM_SCM_ARGS(1),
+		.args[0] = pas_id,
+		.owner = ARM_SMCCC_OWNER_SIP,
+	};
+	struct qcom_scm_res res;
+
+	ret = qcom_scm_clk_enable();
+	if (ret)
+		return ret;
+
+	ret = qcom_scm_bw_enable();
+	if (ret)
+		goto disable_clk;
+
+	ret = qcom_scm_call(__scm->dev, &desc, &res);
+	qcom_scm_bw_disable();
+
+disable_clk:
+	qcom_scm_clk_disable();
+	return ret ? : res.result[0];
+}
+EXPORT_SYMBOL_GPL(qcom_scm_pas_resume);
+
 int qcom_scm_pas_shutdown(u32 pas_id)
 {
 	int ret;
