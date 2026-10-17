@@ -156,6 +156,13 @@
 
 /* CPU frequency cap used while quiet mode relies on passive cooling. */
 #define PP_QUIET_FREQ_KHZ	1440000
+/*
+ * Balanced cap. Sustained all-core load above this heats the X1P42100 from
+ * 65 C to 90 C in ~20 s on the default fan curve, with nothing between that
+ * and the 115 C critical trip; at 1.92 GHz it settles around 81 C. Measured
+ * energy per unit of work at 1.92 GHz is within ~15% of the 1.44 GHz optimum.
+ */
+#define PP_BALANCED_FREQ_KHZ	1920000
 #define PP_MAX_POLICIES		4
 
 /* Thermal zones to feed to the EC (max of). */
@@ -770,6 +777,8 @@ static int asus_ec_set_profile_freq(struct asus_ec *ec,
 
 	if (profile == PLATFORM_PROFILE_QUIET)
 		max_khz = PP_QUIET_FREQ_KHZ;
+	else if (profile == PLATFORM_PROFILE_BALANCED)
+		max_khz = PP_BALANCED_FREQ_KHZ;
 
 	return asus_ec_freq_qos_set(ec, max_khz);
 }
@@ -783,7 +792,7 @@ static int asus_ec_set_profile_freq(struct asus_ec *ec,
  * Vivobook protocol (0x24/0x76) NACKs, we implement platform_profile
  * by controlling the fan and CPU frequency directly:
  *   QUIET        → WEBC quiet curve, or fallback PWM 0 + 1.44 GHz cap
- *   BALANCED     → auto mode (EC default thermal curve), CPU uncapped
+ *   BALANCED     → auto mode (EC default thermal curve), 1.92 GHz cap
  *   PERFORMANCE  → WEBC 0x04, or fallback manual PWM 180, CPU uncapped
  *   MAX_POWER    → WEBC 0x10, or fallback manual PWM 69, CPU uncapped
  */
@@ -884,7 +893,7 @@ static int asus_ec_pp_set(struct device *dev,
 		break;
 
 	case PLATFORM_PROFILE_BALANCED:
-		/* Auto fan curve with no driver-imposed frequency ceiling. */
+		/* Auto fan curve with the balanced frequency ceiling. */
 		if (ec->manual_active) {
 			ret = asus_ec_set_fan_mode(ec, EC_FAN_MODE_AUTO);
 			if (ret)
@@ -1464,6 +1473,8 @@ static int asus_ec_probe(struct i2c_client *client)
 	 * /sys/class/platform-profile/.
 	 */
 	ec->pp_active = PLATFORM_PROFILE_BALANCED;
+	if (ec->n_freq_req)
+		asus_ec_set_profile_freq(ec, ec->pp_active);
 	ec->ppdev = devm_platform_profile_register(dev,
 						   "asus-zenbook-a14-ec", ec,
 						   &asus_ec_pp_ops);
