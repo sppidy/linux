@@ -269,11 +269,13 @@ static int qcom_pas_map_carveout(struct rproc *rproc, phys_addr_t mem_phys, size
 	return ret;
 }
 
+static void qcom_pas_dump_reset_block(struct qcom_pas *pas, const char *when);
+static void qcom_pas_cdsp_qhee_replay(struct qcom_pas *pas, bool pre_smc);
+
 static int qcom_pas_start(struct rproc *rproc)
 {
 	struct qcom_pas *pas = rproc->priv;
 	int ret;
-
 	ret = qcom_q6v5_prepare(&pas->q6v5);
 	if (ret)
 		return ret;
@@ -326,16 +328,39 @@ static int qcom_pas_start(struct rproc *rproc)
 	if (ret)
 		goto release_pas_metadata;
 
+	/* A14 EL2 cdsp-reset test (experiment E): replay QHEE's full CDSP
+	 * bring-up (clocks/config -> vector -> descriptor before the TZ SMC,
+	 * then reset deassert + mailbox handshake after it). TrustZone returns
+	 * OK from auth+reset under bare EL2 but nothing else releases the DSP;
+	 * QHEE normally does all of this by MMIO (verified in the hyp image). */
+	qcom_pas_dump_reset_block(pas, "pre-bringup");
+	qcom_pas_cdsp_qhee_replay(pas, true);
+
+	/* R.4: QHEE's ACPI-method bring-up (clocks/vector/descriptor/deassert)
+	 * runs BEFORE TrustZone auth on this platform — the DSP's PBL is
+	 * expected to be executing already when PIL auth happens. Replay in
+	 * that order. */
+	qcom_pas_cdsp_qhee_replay(pas, false);
+	qcom_pas_dump_reset_block(pas, "post-deassert");
+
 	ret = qcom_scm_pas_prepare_and_auth_reset(pas->pas_ctx);
 	if (ret) {
 		dev_err(pas->dev,
 			"failed to authenticate image and release reset\n");
 		goto unmap_carveout;
 	}
+	qcom_pas_dump_reset_block(pas, "post-auth");
+
+	/* QHEE restart uses PIL_RESUME (SVC_PIL cmd 0x1c) after auth */
+	if (pas->pas_id == 18) {
+		int rret = qcom_scm_pas_resume(pas->pas_id);
+		dev_info(pas->dev, "cdsp pil_resume(0x1c) ret=%d\n", rret);
+	}
 
 	ret = qcom_q6v5_wait_for_start(&pas->q6v5, msecs_to_jiffies(5000));
 	if (ret == -ETIMEDOUT) {
 		dev_err(pas->dev, "start timed out\n");
+		qcom_pas_dump_reset_block(pas, "post-timeout");
 		qcom_scm_pas_shutdown(pas->pas_id);
 		goto unmap_carveout;
 	}
@@ -546,6 +571,17 @@ static int qcom_pas_parse_firmware(struct rproc *rproc, const struct firmware *f
 	 */
 	output_rt = qcom_scm_pas_get_rsc_table(pas->pas_ctx, table, table_sz, &output_rt_size);
 	ret = IS_ERR(output_rt) ? PTR_ERR(output_rt) : 0;
+	/*
+	 * Older TrustZone (e.g. X1E/X1P) does not implement the resource table
+	 * call and fails it with a generic SCM error. Without a hypervisor no
+	 * dynamic resources are assigned there either, so carry on with the
+	 * carveout mappings and whatever table the firmware itself provides.
+	 */
+	if (ret == -EIO || ret == -EOPNOTSUPP) {
+		dev_info(pas->dev, "no resource table from TrustZone (%d), using carveouts only\n",
+			 ret);
+		return 0;
+	}
 	if (ret) {
 		dev_err(pas->dev, "Error in getting resource table: %d\n", ret);
 		return ret;
@@ -594,6 +630,21 @@ static const struct rproc_ops qcom_pas_ops_no_reset = {
 	.da_to_va = qcom_pas_da_to_va,
 	.stop = qcom_pas_stop,
 	.panic = qcom_pas_panic,
+};
+
+/* A14 EL2 cdsp crash-recovery test: keep the firmware-started attach path
+ * (broken-reset DTB unchanged so qebspil still boots CDSP and QHEE sets up
+ * its TZ environment), but ALSO give recovery a real start/stop so a crash
+ * restart can re-run the full PAS sequence on that established environment. */
+static const struct rproc_ops qcom_pas_ops_no_reset_restart = {
+	.attach = qcom_pas_attach,
+	.da_to_va = qcom_pas_da_to_va,
+	.stop = qcom_pas_stop,
+	.panic = qcom_pas_panic,
+	.unprepare = qcom_pas_unprepare,
+	.start = qcom_pas_start,
+	.parse_fw = qcom_pas_parse_firmware,
+	.load = qcom_pas_load,
 };
 
 static int qcom_pas_init_clock(struct qcom_pas *pas)
@@ -725,6 +776,203 @@ static int qcom_pas_alloc_memory_region(struct qcom_pas *pas)
 	return 0;
 }
 
+/* A14 EL2 cdsp-reset test (experiment E): MMIO helpers for the QHEE
+ * bring-up replay. One ioremap per access — inefficient but simple, and
+ * no permanent mappings of registers that can reset the SoC when poked
+ * wrong. */
+static u32 cdsp_rd32(phys_addr_t p)
+{
+	void __iomem *m = ioremap(p, 4);
+	u32 v = 0;
+
+	if (m) {
+		v = readl(m);
+		iounmap(m);
+	}
+	return v;
+}
+
+static void cdsp_wr32(phys_addr_t p, u32 v)
+{
+	void __iomem *m = ioremap(p, 4);
+
+	if (m) {
+		writel(v, m);
+		iounmap(m);
+	}
+}
+
+static void cdsp_rmw32(phys_addr_t p, u32 clr, u32 set)
+{
+	u32 v = cdsp_rd32(p);
+
+	cdsp_wr32(p, (v & ~clr) | set);
+}
+
+
+/* Poll until (reg & mask) != 0 (want=true) or == 0 (want=false); the
+ * caller decides the page is read-safe before invoking. */
+static bool cdsp_poll32(phys_addr_t p, u32 mask, bool want, int ms,
+			struct qcom_pas *pas, const char *what)
+{
+	int i;
+
+	for (i = 0; i < ms; i++) {
+		if (!!(cdsp_rd32(p) & mask) == want)
+			return true;
+		usleep_range(1000, 2000);
+	}
+	dev_warn(pas->dev, "cdsp replay: poll timeout %s (%pa)\n", what, &p);
+	return false;
+}
+
+/* A14 EL2 cdsp-reset test (experiment E4, WRITE-ONLY): minimal bring-up
+ * replay. Every prior attempt that READ anything on the 0x32300xxx control
+ * page (0x1c, 0x400, 0x404, 0x408, 0x1fc8000) instantly reset the SoC with
+ * no trace (pstore confirms: no panic, no dumps). Conclusion: the whole
+ * control page is hostile to non-secure reads except the two offsets QHEE
+ * is observed to read (0x10 in its RMW). So: writes only, no polls, no
+ * variant detection (0x48xxx sequence is common to both chip variants),
+ * no mailbox (base is variant-dependent and its handshake needs reads).
+ * Raw writes assume QHEE's target state; where QHEE used |= we write the
+ * full value since the relevant bits start clear on this cold path. */
+static void qcom_pas_cdsp_qhee_replay(struct qcom_pas *pas, bool pre_smc)
+{
+	if (pas->pas_id != 18)
+		return;
+
+	if (pre_smc) {
+		/* --- variant A pre-reset clock chain (QHEE b1820/F0 recipe) ---
+		 * Ordinary GCC/fuse pages: reads are safe (mailbox precedent). */
+		cdsp_rmw32(0x145008, 0, 1);
+		cdsp_poll32(0x145008, (1 << 1) | (1 << 31), true, 500, pas, "145008 b1|b31");
+		cdsp_rmw32(0x320083c4, 0, 2);
+		cdsp_rmw32(0x320081c0, 0, 2);
+		cdsp_rmw32(0x320081cc, 0, 2);
+		cdsp_rmw32(0x320083e4, 0, 1);
+		cdsp_poll32(0x320083e4, 1u << 31, true, 500, pas, "320083e4 b31");
+		cdsp_rmw32(0x32018034, 1, 0);
+		cdsp_rmw32(0x320083e4, 1, 0);
+		cdsp_rmw32(0x320083e4, 0, 1);
+		cdsp_poll32(0x320083e4, 1u << 31, true, 500, pas, "320083e4 b31(2)");
+		cdsp_rmw32(0x32008080, 1, 0);
+		cdsp_poll32(0x32008080, 1u << 31, true, 500, pas, "32008080 b31");
+		cdsp_rmw32(0x32008080, 0, 0x800);
+		cdsp_rmw32(0x32008080, 0, 1);
+
+		/* config mirror + fuse cluster (QHEE reads these) */
+		cdsp_wr32(0x32300018, cdsp_rd32(0x80253c10));
+		if (cdsp_rd32(0x221c2bec) & 0x1fe000) {
+			u32 fuse = (cdsp_rd32(0x221c2be0) >> 13) |
+				   ((cdsp_rd32(0x221c2be4) & 0x1f) << 19);
+
+			cdsp_wr32(0x32350004, 0x8028550d);
+			cdsp_wr32(0x32350008, 1);
+			cdsp_wr32(0x32350028, 0x9f1);
+			cdsp_wr32(0x32350030, 0x20f9ac0);
+			cdsp_wr32(0x32350038, 0x37d2002);
+			cdsp_wr32(0x323500a4, 0x30);
+			cdsp_wr32(0x323500ac, 0x10000);
+			cdsp_wr32(0x3235003c, 1);
+			cdsp_wr32(0x32350014, fuse);
+			cdsp_wr32(0x32350014, fuse | 0x80000000);
+			cdsp_wr32(0x32350014, fuse);
+			dev_info(pas->dev, "cdsp replay: fuse cluster written (fuse=%08x)\n",
+				 fuse);
+		} else {
+			dev_info(pas->dev, "cdsp replay: fuse gate closed, skipped\n");
+		}
+
+		/* platform descriptor + boot vector (0x10 read is proven safe) */
+		cdsp_wr32(0x32300060, (u32)pas->dtb_mem_phys);
+		cdsp_wr32(0x32300064, 0x00000000);
+		cdsp_wr32(0x32300068, 0x009a027b);
+		cdsp_wr32(0x3230006c, 0x00000100);
+		cdsp_wr32(0x32300070, 0x28000100);
+		cdsp_wr32(0x32300074, 0x00009000);
+		cdsp_rmw32(0x32300010, 0x0ffffff0u,
+			   (u32)(pas->mem_phys >> 4) & 0x0ffffff0u);
+		cdsp_wr32(0x32348040, 1);
+		dsb(sy);
+		dev_info(pas->dev, "cdsp replay: pre-reset done (clocks+fuses+vector+desc)\n");
+	} else {
+		/* reset release: QHEE's deassert order. Mailbox uses RMW + a
+		 * doorbell poll, so reads return — but on the 0x8a40000 page,
+		 * NOT the hostile 0x32300xxx control page. Canary-flush before
+		 * the first read: if this page is also read-fatal we learn it. */
+		cdsp_wr32(0x3230001c, 0);	/* reset control bit0: 0 = run */
+		cdsp_wr32(0x32300404, 1);
+		msleep(5);
+
+		dev_info(pas->dev, "cdsp replay: mailbox first read next (0x32340000 page, variant A)\n");
+		msleep(500);
+		cdsp_wr32(0x32340014, 0);
+		cdsp_rmw32(0x32340010, 0x000000ff, 0);
+		cdsp_rmw32(0x32340018, 0x11c3fc00, 0);
+		cdsp_wr32(0x32340018, 0);
+		cdsp_wr32(0x3234001c, 5);
+		cdsp_wr32(0x32340020, 0x20485699);
+		cdsp_wr32(0x32340024, 0x18226120);
+		cdsp_wr32(0x32340028, 0x82aa299c);
+		cdsp_wr32(0x3234002c, 0);
+		cdsp_wr32(0x32340030, 3);
+		cdsp_wr32(0x32340034, 0x3490000);
+		cdsp_wr32(0x32340038, 0);
+		cdsp_rmw32(0x32340010, 0x00ff0000, 0);
+		cdsp_wr32(0x32340004, 1);
+		cdsp_rmw32(0x32340000, 0, 5);
+		cdsp_rmw32(0x32340000, 0, 0x4000);
+		dev_info(pas->dev, "cdsp replay: doorbell rung, polling b13\n");
+		msleep(500);
+		if (!cdsp_poll32(0x32340000, 1 << 13, true, 500, pas, "mailbox b13"))
+			dev_warn(pas->dev, "cdsp replay: doorbell not acked, continuing\n");
+		cdsp_rmw32(0x32340000, 1 << 13, 0);
+		cdsp_rmw32(0x32340018, 4, 0);
+
+		cdsp_wr32(0x32348024, 0x100201);
+		cdsp_wr32(0x32348020, 1);
+		msleep(5);
+		cdsp_wr32(0x32300400, 1);
+		dsb(sy);
+		dev_info(pas->dev, "cdsp replay: deassert done (with mailbox)\n");
+	}
+}
+
+/* A14 EL2 cdsp-reset test: dump the CDSP reset/boot block (the registers
+ * QHEE pokes: boot vector @ +0x10, platform descriptor @ +0x60). Read-only.
+ * Runs on every boot path so a normal (firmware-started) boot captures the
+ * hypervisor's ground-truth values. */
+static void qcom_pas_dump_reset_block(struct qcom_pas *pas, const char *when)
+{
+	void __iomem *base;
+	u32 vec, d0, d1, d2, d3, d4, d5;
+
+	if (pas->pas_id != 18)
+		return;
+
+	base = ioremap(0x32300000, 0x400);
+	if (!base)
+		return;
+
+	/* Only offsets QHEE itself touches: +0x10 (boot vector, QHEE does a
+	 * read-modify-write of it) and +0x60..0x74 (platform descriptor it
+	 * writes). A broad 0x00-0x7F dump reset the SoC from probe (async
+	 * abort on some offset in the reset-control/unknown region). */
+	vec = readl(base + 0x10);
+	d0 = readl(base + 0x60);
+	d1 = readl(base + 0x64);
+	d2 = readl(base + 0x68);
+	d3 = readl(base + 0x6c);
+	d4 = readl(base + 0x70);
+	d5 = readl(base + 0x74);
+	iounmap(base);
+
+	dev_info(pas->dev,
+		 "cdsp reset-block [%s]: vec=%08x desc=%08x %08x %08x %08x %08x %08x",
+		 when, vec, d0, d1, d2, d3, d4, d5);
+}
+
+
 static int qcom_pas_assign_memory_region(struct qcom_pas *pas)
 {
 	struct qcom_scm_vmperm perm[MAX_ASSIGN_COUNT];
@@ -732,7 +980,8 @@ static int qcom_pas_assign_memory_region(struct qcom_pas *pas)
 	int offset;
 	int ret;
 
-	if (!pas->region_assign_idx)
+	/* count-based guard: region index 0 is a valid assignment target */
+	if (!pas->region_assign_count)
 		return 0;
 
 	for (offset = 0; offset < pas->region_assign_count; ++offset) {
@@ -831,8 +1080,12 @@ static int qcom_pas_probe(struct platform_device *pdev)
 	if (desc->minidump_id)
 		ops = &qcom_pas_minidump_ops;
 
-	if (device_property_read_bool(&pdev->dev, "qcom,broken-reset"))
-		ops = &qcom_pas_ops_no_reset;
+	if (device_property_read_bool(&pdev->dev, "qcom,broken-reset")) {
+		if (desc->pas_id == 18)
+			ops = &qcom_pas_ops_no_reset_restart;
+		else
+			ops = &qcom_pas_ops_no_reset;
+	}
 
 	rproc = devm_rproc_alloc(&pdev->dev, desc->sysmon_name, ops, fw_name, sizeof(*pas));
 
@@ -843,7 +1096,7 @@ static int qcom_pas_probe(struct platform_device *pdev)
 
 	rproc->has_iommu = of_property_present(pdev->dev.of_node, "iommus");
 	if (desc->auto_boot) {
-		if (ops->start)
+		if (ops->start && ops != &qcom_pas_ops_no_reset_restart)
 			rproc->auto_boot = RPROC_AUTO_BOOT_RESTART_IF_FW_AVAILABLE;
 		else
 			rproc->auto_boot = RPROC_AUTO_BOOT_ATTACH_OR_START;
@@ -871,6 +1124,7 @@ static int qcom_pas_probe(struct platform_device *pdev)
 		pas->dtb_pas_id = desc->dtb_pas_id;
 	}
 	platform_set_drvdata(pdev, pas);
+	qcom_pas_dump_reset_block(pas, "probe");
 
 	ret = device_init_wakeup(pas->dev, true);
 	if (ret)
@@ -880,9 +1134,15 @@ static int qcom_pas_probe(struct platform_device *pdev)
 	if (ret)
 		goto free_rproc;
 
-	ret = qcom_pas_assign_memory_region(pas);
-	if (ret)
-		goto free_rproc;
+	/* A14 EL2 cdsp-reset test: only assign when Linux boots the DSP itself;
+	 * the no_reset (broken-reset) path is started by firmware, which owns
+	 * the carveout already — assigning there could fail probe on normal
+	 * boots and must stay untouched. */
+	if (!device_property_read_bool(&pdev->dev, "qcom,broken-reset")) {
+		ret = qcom_pas_assign_memory_region(pas);
+		if (ret)
+			goto free_rproc;
+	}
 
 	ret = qcom_pas_init_clock(pas);
 	if (ret)
@@ -943,8 +1203,13 @@ static int qcom_pas_probe(struct platform_device *pdev)
 		goto remove_ssr_sysmon;
 	}
 
-	pas->pas_ctx->use_tzmem = rproc->has_iommu;
-	pas->dtb_pas_ctx->use_tzmem = rproc->has_iommu;
+	/* A14 EL2 cdsp crash-recovery test: the restart path always needs the
+	 * Linux-side SHM bridge for init_image/auth-and-reset, even on the
+	 * broken-reset normal path which carries no iommus property (the -22
+	 * on cdsp_dtbs.elf at recovery was TZ rejecting a bridge-less
+	 * init_image, exactly the variant-A failure). */
+	pas->pas_ctx->use_tzmem = rproc->has_iommu || pas->pas_id == 18;
+	pas->dtb_pas_ctx->use_tzmem = rproc->has_iommu || pas->pas_id == 18;
 	ret = rproc_add(rproc);
 	if (ret)
 		goto remove_ssr_sysmon;
@@ -1292,6 +1557,14 @@ static const struct qcom_pas_data x1e80100_cdsp_resource = {
 	.ssr_name = "cdsp",
 	.sysmon_name = "cdsp",
 	.ssctl_id = 0x17,
+	/* A14 EL2 cdsp-reset test: hand the firmware carveout (memory-region
+	 * index 0 = cdsp_mem @0x8b900000) to the CDSP secure VMID, shared with
+	 * HLOS, standing in for the hypervisor's HYP_ASSIGN under bare EL2.
+	 * Only effective on the full-reset path (qcom,broken-reset dropped). */
+	.region_assign_idx = 0,
+	.region_assign_count = 1,
+	.region_assign_shared = true,
+	.region_assign_vmid = QCOM_SCM_VMID_CDSP,
 };
 
 static const struct qcom_pas_data sm8350_cdsp_resource = {
